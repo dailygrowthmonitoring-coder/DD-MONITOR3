@@ -1,30 +1,28 @@
 import type { Metadata } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
+const geist = Geist({
+  subsets:  ['latin'],
+  variable: '--font-geist',
+  display:  'swap',
 })
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-mono',
-  display: 'swap',
+const geistMono = Geist_Mono({
+  subsets:  ['latin'],
+  variable: '--font-geist-mono',
+  display:  'swap',
 })
 
 export const metadata: Metadata = {
-  title: 'DD Monitor',
+  title:       'DD Monitor',
   description: 'Dell Data Domain device monitoring dashboard',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} dark`}>
-      <body className="bg-app-bg text-txt-primary font-sans antialiased">
-        {children}
-      </body>
+    <html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
+      <body>{children}</body>
     </html>
   )
 }

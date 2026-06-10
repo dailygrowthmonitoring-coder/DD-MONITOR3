@@ -33,11 +33,11 @@ export function MTreeTable({ mtrees }: MTreeTableProps) {
           <tbody>
             {mtrees.map(mt => (
               <tr
-                key={mt.id}
+                key={mt.mtree_id}
                 className="border-b border-app-border/50 hover:bg-app-bg/50 transition-colors"
               >
                 <td className="px-5 py-2.5 font-mono text-txt-primary">{mt.name}</td>
-                <td className="px-5 py-2.5 font-mono text-txt-muted text-xs">{mt.id}</td>
+                <td className="px-5 py-2.5 font-mono text-txt-muted text-xs">{mt.mtree_id}</td>
                 <td className="px-5 py-2.5">
                   <span
                     className="text-xs font-mono font-semibold"

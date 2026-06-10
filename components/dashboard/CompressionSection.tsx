@@ -8,7 +8,7 @@ interface CompressionSectionProps {
 
 interface RatioBlockProps {
   label: string
-  ratio: string
+  ratio: number
   reduction: number
   accent?: boolean
 }
@@ -21,7 +21,7 @@ function RatioBlock({ label, ratio, reduction, accent = false }: RatioBlockProps
         className="font-mono text-2xl font-bold"
         style={{ color: accent ? '#AADD00' : '#F0F0F5' }}
       >
-        {ratio}
+        {ratio}x
       </div>
       <div className="text-xs text-txt-muted mt-1">{reduction}% reduction</div>
     </div>

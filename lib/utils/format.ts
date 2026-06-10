@@ -22,10 +22,12 @@ export function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
-export function formatGib(value: number): string {
+export function formatGib(value: number | null | undefined): string {
+  if (value == null) return '—'
   return `${value.toFixed(1)} GiB`
 }
 
-export function formatMib(value: number): string {
+export function formatMib(value: number | null | undefined): string {
+  if (value == null) return '—'
   return `${value.toLocaleString()} MiB`
 }

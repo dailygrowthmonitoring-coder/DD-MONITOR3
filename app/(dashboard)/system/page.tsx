@@ -1,186 +1,113 @@
 'use client'
-
-import { formatDistanceToNow, parseISO, format } from 'date-fns'
-import { Card } from '@/components/ui/Card'
-import { SeverityBadge } from '@/components/ui/SeverityBadge'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { SkeletonBlock, SkeletonText } from '@/components/ui/SkeletonCard'
+import { useDevices } from '@/lib/hooks/use-devices'
 import { useSystemHealth } from '@/lib/hooks/use-system-health'
-import { DATA_RETENTION_DAYS } from '@/lib/constants/ui'
-import type { DeviceReportStatus, LogItem } from '@/types/dashboard'
+import { ErrorState } from '@/components/ui/ErrorState'
 
-function statusColor(status: DeviceReportStatus['status']): string {
-  if (status === 'today')  return 'text-st-healthy'
-  if (status === 'stale')  return 'text-st-warning'
-  return 'text-txt-muted'
-}
+const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
+const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
+const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
 
-function statusLabel(status: DeviceReportStatus['status']): string {
-  if (status === 'today')  return 'Today'
-  if (status === 'stale')  return 'Stale'
-  return 'No Data'
-}
-
-function relativeTime(iso: string | null): string {
+function relTime(iso: string | null): string {
   if (!iso) return '—'
-  try { return formatDistanceToNow(parseISO(iso), { addSuffix: true }) }
-  catch { return iso }
-}
-
-function formatDateStr(iso: string | null): string {
-  if (!iso) return '—'
-  try { return format(parseISO(iso), 'MMM dd, yyyy') }
-  catch { return iso }
-}
-
-function LogRow({ log }: { log: LogItem }) {
-  return (
-    <div className="flex items-start gap-3 py-2 border-b border-app-border/40 last:border-0">
-      <SeverityBadge severity={log.severity} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-txt-primary truncate">{log.message}</p>
-        <p className="text-xs text-txt-muted font-mono mt-0.5">{log.event_type}</p>
-      </div>
-      <span className="text-xs text-txt-muted whitespace-nowrap flex-shrink-0">
-        {relativeTime(log.created_at)}
-      </span>
-    </div>
-  )
+  try {
+    const diffMs = Date.now() - new Date(iso).getTime()
+    const mins = Math.round(diffMs / 60_000)
+    if (mins < 60) return `${mins}m ago`
+    return `${Math.round(mins / 60)}h ago`
+  } catch { return '—' }
 }
 
 export default function SystemPage() {
+  const { devices, isLoading: devLoading } = useDevices()
   const { data, isLoading, error, mutate } = useSystemHealth()
 
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold text-txt-primary">System Health</h1>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {[1, 2, 3, 4].map(i => (
-            <Card key={i}>
-              <SkeletonBlock className="h-32 rounded" />
-            </Card>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  if (error || !data) {
-    return (
-      <div className="flex flex-col gap-6">
-        <h1 className="text-2xl font-semibold text-txt-primary">System Health</h1>
-        <ErrorState message="Failed to load system health" onRetry={() => mutate()} />
-      </div>
-    )
-  }
-
-  const overallColor = data.status === 'ok' ? 'text-st-healthy' : 'text-st-warning'
-
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold text-txt-primary">System Health</h1>
-          <p className="text-sm text-txt-muted">Refreshes every 60 seconds</p>
+    <div className="anim-fadein">
+      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Replication</div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
+            cross-domain sync status · system health
+          </div>
         </div>
-        <span className={`text-sm font-semibold ${overallColor}`}>
-          {data.status === 'ok' ? '● Operational' : '● Degraded'}
-        </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Ingestion Status */}
-        <Card title="Ingestion Status">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
-            <dt className="text-txt-muted text-sm">Total Devices</dt>
-            <dd className="text-txt-primary font-mono text-sm">{data.total_devices}</dd>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden', margin: '0 24px 14px' }}>
+        {[
+          { label: 'Total Devices',   val: String(devices.length),                                       color: 'var(--text)' },
+          { label: 'Reporting (24h)', val: data ? String(data.devices_reporting_24h) : '—',              color: 'var(--green)' },
+          { label: 'Errors (24h)',    val: data ? String(data.errors_last_24h) : '—',                    color: data?.errors_last_24h ? 'var(--red)' : 'var(--green)' },
+          { label: 'Total Reports',   val: data ? data.db_stats.total_reports.toLocaleString() : '—',   color: 'var(--accent2)' },
+        ].map((s, i, arr) => (
+          <div key={s.label} style={{ padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--line)' : 'none', position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--line2),transparent)' }} />
+            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 8 }}>{s.label}</div>
+            <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-1.5px', fontFamily: 'var(--font-geist-mono),monospace', lineHeight: 1, color: s.color }}>{s.val}</div>
+          </div>
+        ))}
+      </div>
 
-            <dt className="text-txt-muted text-sm">Reporting (24h)</dt>
-            <dd className={`font-mono text-sm ${data.devices_reporting_24h < data.total_devices ? 'text-st-warning' : 'text-st-healthy'}`}>
-              {data.devices_reporting_24h} / {data.total_devices}
-            </dd>
+      {error && <div style={{ padding: '0 24px 14px' }}><ErrorState message="Failed to load system health" onRetry={() => void mutate()} /></div>}
 
-            <dt className="text-txt-muted text-sm">Last Ingest</dt>
-            <dd className="text-txt-primary font-mono text-sm">{relativeTime(data.last_ingest_at)}</dd>
-
-            <dt className="text-txt-muted text-sm">Errors (24h)</dt>
-            <dd className={`font-mono text-sm ${data.errors_last_24h > 0 ? 'text-st-critical' : 'text-st-healthy'}`}>
-              {data.errors_last_24h}
-            </dd>
-          </dl>
-        </Card>
-
-        {/* Database Stats */}
-        <Card title="Database">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
-            <dt className="text-txt-muted text-sm">Total Reports</dt>
-            <dd className="text-txt-primary font-mono text-sm">
-              {data.db_stats.total_reports.toLocaleString()}
-            </dd>
-
-            <dt className="text-txt-muted text-sm">Total Alerts</dt>
-            <dd className="text-txt-primary font-mono text-sm">
-              {data.db_stats.total_alerts.toLocaleString()}
-            </dd>
-
-            <dt className="text-txt-muted text-sm">Oldest Report</dt>
-            <dd className="text-txt-primary font-mono text-sm">
-              {formatDateStr(data.db_stats.oldest_report_date)}
-            </dd>
-
-            <dt className="text-txt-muted text-sm">Newest Report</dt>
-            <dd className="text-txt-primary font-mono text-sm">
-              {formatDateStr(data.db_stats.newest_report_date)}
-            </dd>
-
-            <dt className="text-txt-muted text-sm">Retention</dt>
-            <dd className="text-txt-primary font-mono text-sm">{DATA_RETENTION_DAYS} days</dd>
-          </dl>
-        </Card>
-
-        {/* Device Report Status */}
-        <Card title="Device Report Status">
-          <div className="flex flex-col divide-y divide-app-border/40">
-            {data.device_statuses.length === 0 && (
-              <p className="text-txt-muted text-sm py-2">No devices found</p>
-            )}
-            {data.device_statuses.map(dev => (
-              <div key={dev.device_id} className="flex items-center justify-between py-2.5">
-                <div>
-                  <p className="text-sm text-txt-primary font-mono">{dev.hostname}</p>
-                  {dev.location && (
-                    <p className="text-xs text-txt-muted">{dev.location}</p>
-                  )}
-                </div>
-                <div className="flex flex-col items-end gap-0.5">
-                  <span className={`text-xs font-semibold ${statusColor(dev.status)}`}>
-                    {statusLabel(dev.status)}
+      <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Device status pairs */}
+        <div style={PANEL}>
+          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>device_status</div></div>
+          <div style={{ padding: '12px 14px' }}>
+            {(devLoading || isLoading) && <div style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</div>}
+            {data?.device_statuses.map(dev => (
+              <div key={dev.device_id} style={{ background: 'var(--bg3)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '12px 14px', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-geist-mono),monospace', fontSize: 11 }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: dev.status === 'today' ? 'var(--green)' : 'var(--amber)' }} />
+                    {dev.hostname}
+                  </div>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', background: dev.status === 'today' ? 'var(--green-bg)' : 'var(--amber-bg)', color: dev.status === 'today' ? 'var(--green)' : 'var(--amber)', borderColor: dev.status === 'today' ? 'rgba(34,197,94,.2)' : 'rgba(245,158,11,.2)' }}>
+                    {dev.status === 'today' ? 'in_sync' : 'stale'}
                   </span>
-                  {dev.last_report_date && (
-                    <span className="text-xs text-txt-muted font-mono">
-                      {dev.last_report_date}
-                    </span>
-                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6 }}>
+                  {[
+                    { k: 'location', v: dev.location ?? 'unknown' },
+                    { k: 'last_report', v: dev.last_report_date ?? '—' },
+                    { k: 'lag', v: dev.status === 'today' ? '0m' : '> 24h' },
+                    { k: 'last_seen', v: relTime(dev.last_report_date) },
+                  ].map(kv => (
+                    <div key={kv.k}>
+                      <div style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 2 }}>{kv.k}</div>
+                      <div style={{ fontSize: 12, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, color: 'var(--text2)' }}>{kv.v}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
-          </div>
-        </Card>
-
-        {/* Recent Logs */}
-        <Card title="Recent System Logs">
-          <div>
-            {data.recent_logs.length === 0 && (
-              <p className="text-txt-muted text-sm py-2">No recent logs</p>
+            {!isLoading && !data?.device_statuses.length && (
+              <div style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'center', padding: '24px 0' }}>No device status data</div>
             )}
-            {data.recent_logs.map(log => (
-              <LogRow key={log.id} log={log} />
-            ))}
           </div>
-        </Card>
+        </div>
+
+        {/* Recent logs */}
+        {data?.recent_logs && data.recent_logs.length > 0 && (
+          <div style={PANEL}>
+            <div style={PANEL_HEAD}><div style={PANEL_TITLE}>recent_logs</div></div>
+            <div style={{ padding: '12px 14px' }}>
+              {data.recent_logs.slice(0, 6).map(log => (
+                <div key={log.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', flexShrink: 0, background: log.severity === 'ERROR' ? 'var(--red-bg)' : log.severity === 'WARNING' ? 'var(--amber-bg)' : 'var(--blue-bg)', color: log.severity === 'ERROR' ? 'var(--red)' : log.severity === 'WARNING' ? 'var(--amber)' : 'var(--blue)', borderColor: log.severity === 'ERROR' ? 'rgba(239,68,68,.2)' : log.severity === 'WARNING' ? 'rgba(245,158,11,.2)' : 'rgba(59,130,246,.2)' }}>
+                    {log.severity.toLowerCase()}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.message}</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 2 }}>{log.event_type}</div>
+                  </div>
+                  <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', flexShrink: 0 }}>{relTime(log.created_at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

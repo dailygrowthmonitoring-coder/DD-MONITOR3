@@ -2,30 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  html {
-    background-color: #0A0A0F;
-    color: #F0F0F5;
-  }
-
-  /* Custom scrollbar for dark theme */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: #0A0A0F;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: #1E1E2E;
-    border-radius: 3px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #2E2E3E;
-  }
-
-  /* Native date input styling */
-  input[type='date'] {
-    color-scheme: dark;
-  }
+:root {
+  --bg:   #09090B;
+  --bg2:  #111113;
+  --bg3:  #18181B;
+  --bg4:  #1F1F23;
+  --line: #27272A;
+  --line2:#3F3F46;
+  --muted:#52525B;
+  --sub:  #A1A1AA;
+  --text: #FAFAFA;
+  --text2:#E4E4E7;
+  --accent: #7C3AED;
+  --accent2:#8B5CF6;
+  --accent-glow: rgba(124,58,237,.15);
+  --green:     #22C55E;
+  --green-dim: #15803D;
+  --green-bg:  rgba(34,197,94,.08);
+  --amber:     #F59E0B;
+  --amber-dim: #B45309;
+  --amber-bg:  rgba(245,158,11,.08);
+  --red:       #EF4444;
+  --red-dim:   #B91C1C;
+  --red-bg:    rgba(239,68,68,.08);
+  --blue:      #3B82F6;
+  --blue-bg:   rgba(59,130,246,.08);
+  --sw: 200px;
+  --th: 44px;
+  --r:  4px;
 }
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-geist), 'Geist', ui-sans-serif, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 2px; }
+
+  input[type='date'] { color-scheme: dark; }
+  input::placeholder { color: var(--muted); }
+  select option { background: var(--bg3); }
+}
+
+@keyframes wa-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+@keyframes cr-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes live-pulse {
+  0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}
+  70%{box-shadow:0 0 0 4px rgba(34,197,94,0)}
+}
+@keyframes blink { 0%,100%{opacity:.9} 50%{opacity:0} }
+@keyframes fadein { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+
+.anim-wa-pulse { animation: wa-pulse 2s infinite; }
+.anim-cr-pulse { animation: cr-pulse 1s infinite; }
+.anim-live     { animation: live-pulse 2s infinite; }
+.anim-blink    { animation: blink .9s infinite; }
+.anim-fadein   { animation: fadein .15s ease; }

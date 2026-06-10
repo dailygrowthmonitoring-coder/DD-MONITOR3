@@ -1,196 +1,142 @@
 'use client'
-
 import { useState } from 'react'
 import { format, subDays } from 'date-fns'
-import { Card } from '@/components/ui/Card'
 import { useDevices } from '@/lib/hooks/use-devices'
-import { SkeletonBlock } from '@/components/ui/SkeletonCard'
 import { DATA_RETENTION_DAYS } from '@/lib/constants/ui'
 
 const today   = format(new Date(), 'yyyy-MM-dd')
 const minDate = format(subDays(new Date(), DATA_RETENTION_DAYS), 'yyyy-MM-dd')
 
-const FORMAT_OPTIONS = [
-  { label: 'CSV',  value: 'csv',  description: 'Comma-separated, opens in Excel' },
-  { label: 'JSON', value: 'json', description: 'Structured data for integrations' },
-  { label: 'PDF',  value: 'pdf',  description: 'Formatted report for printing' },
+const FORMAT_OPTS = [
+  { label: 'CSV',  val: 'csv',  desc: 'Comma-separated, opens in Excel' },
+  { label: 'JSON', val: 'json', desc: 'Structured data for integrations' },
+  { label: 'PDF',  val: 'pdf',  desc: 'Formatted report for printing' },
+]
+const DATA_OPTS = [
+  { label: 'Storage Snapshots', val: 'storage' },
+  { label: 'Compression Stats', val: 'compression' },
+  { label: 'Alerts',            val: 'alerts' },
+  { label: 'System Logs',       val: 'logs' },
+  { label: 'Full Report',       val: 'full' },
 ]
 
-const DATA_OPTIONS = [
-  { label: 'Storage Snapshots', value: 'storage' },
-  { label: 'Compression Stats', value: 'compression' },
-  { label: 'Alerts',            value: 'alerts' },
-  { label: 'System Logs',       value: 'logs' },
-  { label: 'Full Report',       value: 'full' },
-]
+const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
+const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
+const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
+const FIELD_LABEL: React.CSSProperties = { fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }
+const INPUT: React.CSSProperties = { height: 32, borderRadius: 'var(--r)', border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 12, padding: '0 10px', fontFamily: 'var(--font-geist-mono),monospace', outline: 'none', width: '100%' }
 
 export default function ExportPage() {
-  const [selectedDevice, setSelectedDevice] = useState<string>('all')
-  const [fromDate, setFromDate]             = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
-  const [toDate, setToDate]                 = useState(today)
-  const [exportFormat, setExportFormat]     = useState('csv')
-  const [dataType, setDataType]             = useState('storage')
+  const [device, setDevice]   = useState<string>('all')
+  const [from,   setFrom]     = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
+  const [to,     setTo]       = useState(today)
+  const [fmt,    setFmt]      = useState('csv')
+  const [dtype,  setDtype]    = useState('storage')
 
-  const { devices, isLoading: devicesLoading } = useDevices()
+  const { devices, isLoading } = useDevices()
+
+  const selectedDevice = device === 'all' ? `All (${devices.length})` : (devices.find(d => d.id === device)?.hostname ?? device.slice(0, 8))
+  const selectedData   = DATA_OPTS.find(o => o.val === dtype)?.label ?? dtype
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-txt-primary">Export Data</h1>
-        <p className="text-sm text-txt-muted">Download device reports and metrics</p>
-      </div>
-
-      {/* Phase note */}
-      <div className="rounded-lg border border-st-info/30 bg-st-info/10 px-4 py-3 flex items-start gap-3">
-        <span className="text-st-info text-lg leading-none mt-0.5">ℹ</span>
+    <div className="anim-fadein">
+      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <p className="text-sm text-txt-primary font-medium">Export Coming in Phase 8</p>
-          <p className="text-sm text-txt-muted mt-0.5">
-            Export functionality will be implemented in Phase 8. Configure your export parameters
-            below — the download endpoint will be wired up in the next release.
-          </p>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Export</div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
+            download device reports and metrics
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Scope */}
-        <Card title="Scope">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-txt-muted font-medium">Device</label>
-              {devicesLoading ? (
-                <SkeletonBlock className="h-9 w-full rounded" />
-              ) : (
-                <select
-                  value={selectedDevice}
-                  onChange={e => setSelectedDevice(e.target.value)}
-                  className="h-9 rounded border border-app-border bg-app-card text-txt-primary text-sm px-3 focus:outline-none focus:border-accent"
-                >
-                  <option value="all">All Devices</option>
-                  {devices.map(d => (
-                    <option key={d.id} value={d.id}>
-                      {d.hostname}{d.location ? ` (${d.location})` : ''}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+      {/* Info banner */}
+      <div style={{ margin: '0 24px 14px', padding: '10px 14px', background: 'var(--blue-bg)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 'var(--r)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <span style={{ color: 'var(--blue)', fontSize: 14, lineHeight: '18px', flexShrink: 0 }}>ℹ</span>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 2 }}>Export coming in Phase 8</div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Configure parameters below — the download endpoint will be wired up in the next release.</div>
+        </div>
+      </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-txt-muted font-medium">From</label>
-                <input
-                  type="date"
-                  value={fromDate}
-                  min={minDate}
-                  max={toDate}
-                  onChange={e => setFromDate(e.target.value)}
-                  className="h-9 rounded border border-app-border bg-app-card text-txt-primary text-sm px-3 font-mono focus:outline-none focus:border-accent"
-                />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 24px 14px' }}>
+        {/* Scope */}
+        <div style={PANEL}>
+          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>scope</div></div>
+          <div style={{ padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <div style={FIELD_LABEL}>device</div>
+              <select value={device} onChange={e => setDevice(e.target.value)} style={{ ...INPUT }}>
+                <option value="all">All Devices</option>
+                {!isLoading && devices.map(d => (
+                  <option key={d.id} value={d.id}>{d.hostname}{d.location ? ` (${d.location})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div style={FIELD_LABEL}>from</div>
+                <input type="date" value={from} min={minDate} max={to} onChange={e => setFrom(e.target.value)} style={{ ...INPUT }} />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-txt-muted font-medium">To</label>
-                <input
-                  type="date"
-                  value={toDate}
-                  min={fromDate}
-                  max={today}
-                  onChange={e => setToDate(e.target.value)}
-                  className="h-9 rounded border border-app-border bg-app-card text-txt-primary text-sm px-3 font-mono focus:outline-none focus:border-accent"
-                />
+              <div>
+                <div style={FIELD_LABEL}>to</div>
+                <input type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} style={{ ...INPUT }} />
               </div>
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* Format */}
-        <Card title="Format & Data">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-txt-muted font-medium">Export Format</label>
-              <div className="flex flex-col gap-2">
-                {FORMAT_OPTIONS.map(opt => (
-                  <label
-                    key={opt.value}
-                    className={[
-                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
-                      exportFormat === opt.value
-                        ? 'border-accent bg-accent/10'
-                        : 'border-app-border hover:border-accent/50',
-                    ].join(' ')}
-                  >
-                    <input
-                      type="radio"
-                      name="format"
-                      value={opt.value}
-                      checked={exportFormat === opt.value}
-                      onChange={e => setExportFormat(e.target.value)}
-                      className="accent-accent"
-                    />
+        <div style={PANEL}>
+          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>format &amp; data</div></div>
+          <div style={{ padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <div style={FIELD_LABEL}>export format</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {FORMAT_OPTS.map(o => (
+                  <label key={o.val} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r)', border: `1px solid ${fmt === o.val ? 'var(--accent)' : 'var(--line)'}`, background: fmt === o.val ? 'var(--accent-glow)' : 'var(--bg3)', cursor: 'pointer' }}>
+                    <input type="radio" name="fmt" value={o.val} checked={fmt === o.val} onChange={() => setFmt(o.val)} style={{ accentColor: 'var(--accent)', flexShrink: 0 }} />
                     <div>
-                      <span className="text-sm text-txt-primary font-medium">{opt.label}</span>
-                      <span className="text-xs text-txt-muted ml-2">{opt.description}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', fontFamily: 'var(--font-geist-mono),monospace' }}>{o.label}</span>
+                      <span style={{ fontSize: 10.5, color: 'var(--muted)', marginLeft: 8 }}>{o.desc}</span>
                     </div>
                   </label>
                 ))}
               </div>
             </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-txt-muted font-medium">Data Type</label>
-              <select
-                value={dataType}
-                onChange={e => setDataType(e.target.value)}
-                className="h-9 rounded border border-app-border bg-app-card text-txt-primary text-sm px-3 focus:outline-none focus:border-accent"
-              >
-                {DATA_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
+            <div>
+              <div style={FIELD_LABEL}>data type</div>
+              <select value={dtype} onChange={e => setDtype(e.target.value)} style={{ ...INPUT }}>
+                {DATA_OPTS.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
               </select>
             </div>
           </div>
-        </Card>
+        </div>
       </div>
 
-      {/* Preview & Download */}
-      <Card title="Summary">
-        <div className="flex flex-col gap-4">
-          <dl className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <dt className="text-xs text-txt-muted mb-1">Device</dt>
-              <dd className="text-sm text-txt-primary font-mono">
-                {selectedDevice === 'all'
-                  ? `All (${devices.length})`
-                  : devices.find(d => d.id === selectedDevice)?.hostname ?? selectedDevice.slice(0, 8)}
-              </dd>
+      {/* Summary */}
+      <div style={{ padding: '0 24px 20px' }}>
+        <div style={PANEL}>
+          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>summary</div></div>
+          <div style={{ padding: '14px 14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+              {[
+                { k: 'device',     v: selectedDevice },
+                { k: 'date_range', v: `${from} → ${to}` },
+                { k: 'format',     v: fmt.toUpperCase() },
+                { k: 'data',       v: selectedData },
+              ].map(kv => (
+                <div key={kv.k}>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4 }}>{kv.k}</div>
+                  <div style={{ fontSize: 12, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--text2)' }}>{kv.v}</div>
+                </div>
+              ))}
             </div>
-            <div>
-              <dt className="text-xs text-txt-muted mb-1">Date Range</dt>
-              <dd className="text-sm text-txt-primary font-mono">{fromDate} → {toDate}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-txt-muted mb-1">Format</dt>
-              <dd className="text-sm text-txt-primary">{exportFormat.toUpperCase()}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-txt-muted mb-1">Data</dt>
-              <dd className="text-sm text-txt-primary">
-                {DATA_OPTIONS.find(o => o.value === dataType)?.label ?? dataType}
-              </dd>
-            </div>
-          </dl>
-
-          <button
-            disabled
-            className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-app-border text-txt-muted cursor-not-allowed text-sm font-medium"
-            title="Available in Phase 8"
-          >
-            <span>↓</span>
-            Download Export
-            <span className="ml-1 text-xs opacity-60">(Phase 8)</span>
-          </button>
+            <button disabled style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 'var(--r)', fontSize: 12, fontWeight: 500, border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--muted)', cursor: 'not-allowed', opacity: .6 }}>
+              ↓ Download Export <span style={{ fontSize: 10, opacity: .7 }}>(Phase 8)</span>
+            </button>
+          </div>
         </div>
-      </Card>
+      </div>
     </div>
   )
 }

@@ -7,7 +7,7 @@ interface ReplicationSectionProps {
 }
 
 export function ReplicationSection({ replication }: ReplicationSectionProps) {
-  const configured = replication?.configured === true
+  const configured = replication?.is_configured === true
 
   return (
     <Card title="Replication">

@@ -103,6 +103,7 @@ export function parseGeneralInfo(text: string): SectionResult<ReportMeta> {
         serial_number,
         chassis_serial,
         os_version,
+        hw_revision: null,
         location,
         uptime_days,
         data_encryption_enabled,

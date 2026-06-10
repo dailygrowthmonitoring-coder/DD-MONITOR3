@@ -1,13 +1,9 @@
 import type { MTreeData } from '../../../types/dd-report'
 import type { SectionResult } from '../types'
 
-// Matches mtree list row: "/data/col1/backup                   0.0   RW"
-// or: "/data/col1/ntrkbsr_new         423971.7   RW"
+// /data/col1/backup                   0.0   RW
+// /data/col1/ntrkbsr_new         423971.7   RW
 const RE_MTREE_LIST_ROW = /^\/data\/col1\/(\S+)\s+([\d.]+|-)\s+(\w[\w\s]*\w|\w)/gm
-
-// Matches dm_mtree entry: "1: backup,1574169456,#Inode=4,...,RW"
-// or: "2: ntrkbsr_new,1589978419,...,RW"
-const RE_DM_MTREE = /^\d+:\s+(\w+),(\d+),#Inode=/gm
 
 function safeFloat(val: string): number {
   if (val === '-') return 0
@@ -32,39 +28,26 @@ export function parseMtrees(text: string): SectionResult<MTreeData[]> {
       return { value: [], error: 'Mtree List section not found' }
     }
 
-    // Bound the search strictly between "Mtree List" and "Mtree Show Compression"
-    const afterSection = text.slice(sectionIdx)
+    const afterSection  = text.slice(sectionIdx)
     const nextSectionIdx = afterSection.indexOf('Mtree Show Compression')
     const window = nextSectionIdx > 0
       ? afterSection.slice(0, nextSectionIdx)
       : afterSection.slice(0, 1000)
 
-    // Build ID lookup from dm_mtree entries (found throughout the file)
-    const idMap = buildIdMap(text)
-
+    const idMap  = buildIdMap(text)
     const mtrees: MTreeData[] = []
     const re = RE_MTREE_LIST_ROW
-
-    // Reset lastIndex since it's a /g regex reused across calls
     re.lastIndex = 0
     let match: RegExpExecArray | null
 
     while ((match = re.exec(window)) !== null) {
-      const name = match[1].trim()
+      const name     = match[1].trim()
       const pre_comp_gib = safeFloat(match[2])
       const rawStatus = match[3].trim()
-      // Keep only the first token as status (handles trailing spaces in file)
-      const status = rawStatus.split(/\s+/)[0]
+      const status   = rawStatus.split(/\s+/)[0]
+      const mtree_id = idMap.get(name) ?? ''
 
-      const id = idMap.get(name) ?? ''
-
-      mtrees.push({
-        name,
-        id,
-        status,
-        pre_comp_gib,
-        post_comp_gib: null,
-      })
+      mtrees.push({ name, mtree_id, status, pre_comp_gib, post_comp_gib: null })
     }
 
     if (mtrees.length === 0) {

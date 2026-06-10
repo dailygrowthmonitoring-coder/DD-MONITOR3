@@ -1,11 +1,10 @@
 import type { NetworkData, NetworkPort } from '../../../types/dd-report'
 import type { SectionResult } from '../types'
 
-// Matches a network hardware table data row starting with an eth port name:
-// "eth1a   1000Mb/s   full      100/1000/10000   00:60:16:a8:df:34   Copper     yes           running"
-// "eth1b   unknown    unknown   100/1000/10000   00:60:16:a8:df:35   Copper     unknown       down"
-// We target eth* ports and extract: name, speed, duplex, link_status (last column)
-const RE_PORT_ROW = /^(eth\w+)\s+([\w/]+)\s+(\w+)\s+[\w/]+\s+[\w:]+\s+\w+\s+\w+\s+(\w+)/gm
+// eth1a   1000Mb/s   full      100/1000/10000   00:60:16:a8:df:34   Copper     yes           running
+// Groups: 1=port_name 2=speed 3=duplex (skip supported speeds) 4=mac 5=port_type 6=autoneg 7=link_status
+const RE_PORT_ROW =
+  /^(eth\w+)\s+([\w/]+)\s+(\w+)\s+[\w/]+\s+([\w:]+)\s+(\w+)\s+(\w+)\s+(\w+)/gm
 
 export function parseNetwork(text: string): SectionResult<NetworkData> {
   try {
@@ -14,8 +13,7 @@ export function parseNetwork(text: string): SectionResult<NetworkData> {
       return { value: { ports: [] }, error: 'Net Show Hardware section not found' }
     }
 
-    // Bound to section — ends at next blank line triple
-    const after = text.slice(sectionIdx)
+    const after  = text.slice(sectionIdx)
     const endIdx = after.search(/\n\n\n/)
     const window = endIdx > 0 ? after.slice(0, endIdx) : after.slice(0, 2000)
 
@@ -26,10 +24,13 @@ export function parseNetwork(text: string): SectionResult<NetworkData> {
 
     while ((match = re.exec(window)) !== null) {
       ports.push({
-        name: match[1],
-        speed: match[2],
-        duplex: match[3],
-        link: match[4],
+        port_name:   match[1],
+        speed:       match[2],
+        duplex:      match[3],
+        mac_address: match[4],
+        port_type:   match[5],
+        autoneg:     match[6],
+        link_status: match[7],
       })
     }
 

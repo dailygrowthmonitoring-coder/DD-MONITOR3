@@ -43,7 +43,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     const result = await processIngest(body.raw_text, body.filename)
     return Response.json(result, { status: 200 })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[ingest] Full error:', err)
+    const message = err instanceof Error ? err.message : String(err)
     await logEvent({
       event_type: 'INGEST_ERROR',
       message: `Ingest failed for ${body.filename}: ${message}`,
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       severity: 'ERROR',
     })
     return Response.json(
-      { error: 'Ingest failed', code: 'INGEST_ERROR' },
+      { error: message, code: 'INGEST_ERROR' },
       { status: 500 }
     )
   }

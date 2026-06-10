@@ -1,7 +1,7 @@
 import { getAdminClient } from '../admin'
 import type { DDAlertRow, DDAlertInsert } from '../types'
 
-const COLS = 'id, device_id, report_id, alert_id, severity, class, object, message, post_time, is_active, created_at' as const
+const COLS = 'id, device_id, report_id, report_date, alert_id, severity, class, object, message, post_time, clear_time, is_active, status, created_at' as const
 
 export interface AlertFilters {
   device_id?: string
@@ -59,6 +59,18 @@ export async function querySelectActiveAlertsSummary(): Promise<
     .eq('is_active', true)
   if (error) throw new Error(`querySelectActiveAlertsSummary: ${error.message}`)
   return (data ?? []) as Array<{ device_id: string; severity: string }>
+}
+
+export async function querySelectAlertsByReportId(
+  reportId: string
+): Promise<DDAlertRow[]> {
+  const { data, error } = await getAdminClient()
+    .from('dd_alerts')
+    .select(COLS)
+    .eq('report_id', reportId)
+    .order('post_time', { ascending: false })
+  if (error) throw new Error(`querySelectAlertsByReportId: ${error.message}`)
+  return (data ?? []) as DDAlertRow[]
 }
 
 export async function queryCountAlerts(): Promise<number> {

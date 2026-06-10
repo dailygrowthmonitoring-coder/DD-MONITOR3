@@ -72,16 +72,16 @@ export async function getAuthForLayout(): Promise<
 > {
   try {
     const supabase = await createServerSupabaseClient()
-    const { data: { session } } = await supabase.auth.getSession()
+    const { data: { user }, error } = await supabase.auth.getUser()
 
-    if (!session) return { ok: false, redirect: '/login' }
+    if (!user || error) return { ok: false, redirect: '/login' }
 
     const cookieStore = await cookies()
     const verified = cookieStore.get(TWO_FA_COOKIE)?.value
 
     if (verified !== 'true') return { ok: false, redirect: '/2fa' }
 
-    return { ok: true, userId: session.user.id }
+    return { ok: true, userId: user.id }
   } catch {
     return { ok: false, redirect: '/login' }
   }

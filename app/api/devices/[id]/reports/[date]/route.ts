@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth/validate-session'
-import { getReportByDeviceAndDate } from '@/lib/services/reports'
+import { getDeviceReportFull } from '@/lib/services/reports'
 import { logEvent } from '@/lib/services/log'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -21,7 +21,7 @@ export async function GET(
   }
 
   try {
-    const report = await getReportByDeviceAndDate(id, date)
+    const report = await getDeviceReportFull(id, date)
     if (!report) {
       return Response.json(
         { error: 'Report not found', code: 'NOT_FOUND' },

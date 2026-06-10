@@ -1,176 +1,154 @@
 'use client'
-
 import { useState } from 'react'
-import { formatDistanceToNow, parseISO } from 'date-fns'
-import { Card } from '@/components/ui/Card'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { SkeletonBlock } from '@/components/ui/SkeletonCard'
-import { SeverityBadge } from '@/components/ui/SeverityBadge'
 import { useLogs } from '@/lib/hooks/use-logs'
+import { ErrorState } from '@/components/ui/ErrorState'
 import type { LogItem } from '@/types/dashboard'
 
-const SEVERITY_OPTIONS = [
-  { label: 'All',     value: '' },
-  { label: 'Error',   value: 'ERROR' },
-  { label: 'Warning', value: 'WARNING' },
-  { label: 'Info',    value: 'INFO' },
+const PAGE_SIZE = 40
+const SEV_OPTS = [
+  { label: 'All',     val: '' },
+  { label: 'Error',   val: 'ERROR' },
+  { label: 'Warning', val: 'WARNING' },
+  { label: 'Info',    val: 'INFO' },
 ]
 
-const PAGE_SIZE = 40
+const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
+const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
+const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
+const TH: React.CSSProperties = { fontSize: 10, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.6px', color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', padding: '8px 12px', borderBottom: '1px solid var(--line)', textAlign: 'left', whiteSpace: 'nowrap' }
+const TD: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid var(--line)', fontSize: 11.5, verticalAlign: 'top' }
 
-function relativeTime(iso: string): string {
-  try { return formatDistanceToNow(parseISO(iso), { addSuffix: true }) }
-  catch { return iso }
+function relTime(iso: string): string {
+  try {
+    const diffMs = Date.now() - new Date(iso).getTime()
+    const mins = Math.round(diffMs / 60_000)
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.round(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.round(hrs / 24)}d ago`
+  } catch { return iso }
+}
+
+const SEV_STYLES: Record<string, React.CSSProperties> = {
+  ERROR:   { background: 'var(--red-bg)',   color: 'var(--red)',   borderColor: 'rgba(239,68,68,.2)' },
+  WARNING: { background: 'var(--amber-bg)', color: 'var(--amber)', borderColor: 'rgba(245,158,11,.2)' },
+  INFO:    { background: 'var(--blue-bg)',  color: 'var(--blue)',  borderColor: 'rgba(59,130,246,.2)' },
+}
+
+function SevBadge({ severity }: { severity: string }) {
+  const s = SEV_STYLES[severity] ?? { background: 'var(--bg3)', color: 'var(--sub)', borderColor: 'var(--line)' }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', ...s }}>
+      {severity.toLowerCase()}
+    </span>
+  )
 }
 
 function LogRow({ log }: { log: LogItem }) {
   return (
-    <tr className="border-b border-app-border/50 hover:bg-app-card/60 transition-colors">
-      <td className="px-4 py-3">
-        <SeverityBadge severity={log.severity} />
+    <tr style={{ borderBottom: '1px solid var(--line)' }}>
+      <td style={TD}><SevBadge severity={log.severity} /></td>
+      <td style={{ ...TD, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--muted)', fontSize: 11 }}>{log.event_type}</td>
+      <td style={{ ...TD, color: 'var(--text2)', maxWidth: 420 }}>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.message}>{log.message}</div>
       </td>
-      <td className="px-4 py-3 font-mono text-xs text-txt-muted">{log.event_type}</td>
-      <td className="px-4 py-3 text-txt-primary text-sm max-w-xs truncate" title={log.message}>
-        {log.message}
-      </td>
-      <td className="px-4 py-3 font-mono text-xs text-txt-muted whitespace-nowrap">
-        {relativeTime(log.created_at)}
-      </td>
+      <td style={{ ...TD, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--muted)', fontSize: 10, whiteSpace: 'nowrap' }}>{relTime(log.created_at)}</td>
     </tr>
   )
 }
 
 export default function LogsPage() {
-  const [severity,   setSeverity]  = useState('')
-  const [eventType,  setEventType] = useState('')
-  const [page,       setPage]      = useState(1)
+  const [severity,  setSeverity]  = useState('')
+  const [eventType, setEventType] = useState('')
+  const [page,      setPage]      = useState(1)
 
-  const { data, isLoading, error } = useLogs({
-    severity:   severity   || undefined,
-    event_type: eventType  || undefined,
+  const { data, isLoading, error, mutate } = useLogs({
+    severity:   severity || undefined,
+    event_type: eventType || undefined,
     page,
     limit: PAGE_SIZE,
   })
 
-  function handleFilterChange(cb: () => void) {
-    cb()
-    setPage(1)
-  }
+  function changeFilter(cb: () => void) { cb(); setPage(1) }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-txt-primary">System Logs</h1>
-        <p className="text-sm text-txt-muted">Ingestion, error, and audit events</p>
+    <div className="anim-fadein">
+      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Reports</div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
+            {data ? `${data.total.toLocaleString()} events` : 'ingestion · errors · audit'}
+          </div>
+        </div>
       </div>
 
       {/* Filters */}
-      <Card>
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-txt-muted font-medium">Severity</label>
-            <div className="flex gap-1">
-              {SEVERITY_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => handleFilterChange(() => setSeverity(opt.value))}
-                  className={[
-                    'px-3 py-1.5 rounded text-sm transition-colors',
-                    severity === opt.value
-                      ? 'bg-accent text-app-bg font-semibold'
-                      : 'bg-app-border text-txt-muted hover:text-txt-primary',
-                  ].join(' ')}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-txt-muted font-medium">Event Type</label>
-            <input
-              type="text"
-              value={eventType}
-              onChange={e => handleFilterChange(() => setEventType(e.target.value))}
-              placeholder="e.g. INGEST_SUCCESS"
-              className="h-9 rounded border border-app-border bg-app-card text-txt-primary text-sm px-3 font-mono placeholder:text-txt-muted/50 focus:outline-none focus:border-accent w-48"
-            />
-          </div>
-
-          {data && (
-            <p className="ml-auto text-sm text-txt-muted">
-              {data.total.toLocaleString()} event{data.total !== 1 ? 's' : ''}
-            </p>
-          )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 24px 12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SEV_OPTS.map(o => (
+            <button key={o.val} onClick={() => changeFilter(() => setSeverity(o.val))} style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 10px', borderRadius: 'var(--r)', fontSize: 11.5, fontWeight: 500, cursor: 'pointer', border: `1px solid ${severity === o.val ? 'var(--accent)' : 'var(--line)'}`, background: severity === o.val ? 'var(--accent)' : 'var(--bg2)', color: severity === o.val ? '#fff' : 'var(--sub)' }}>
+              {o.label}
+            </button>
+          ))}
         </div>
-      </Card>
+        <input
+          type="text"
+          value={eventType}
+          onChange={e => changeFilter(() => setEventType(e.target.value))}
+          placeholder="event_type…"
+          style={{ height: 28, borderRadius: 'var(--r)', border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 11, padding: '0 10px', fontFamily: 'var(--font-geist-mono),monospace', outline: 'none', width: 160 }}
+        />
+      </div>
+
+      {error && <div style={{ padding: '0 24px 14px' }}><ErrorState message="Failed to load logs" onRetry={() => void mutate()} /></div>}
 
       {/* Table */}
-      <Card>
-        {isLoading && (
-          <div className="flex flex-col gap-3">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <SkeletonBlock key={i} className="h-10 rounded" />
-            ))}
+      <div style={{ padding: '0 24px 20px' }}>
+        <div style={PANEL}>
+          <div style={PANEL_HEAD}>
+            <div style={PANEL_TITLE}>event_log</div>
+            {data && <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace' }}>{data.total.toLocaleString()} total</span>}
           </div>
-        )}
-        {error && <ErrorState message="Failed to load logs" onRetry={() => setPage(1)} />}
-        {!isLoading && !error && data && (
-          <div className="flex flex-col gap-4">
-            <div className="overflow-x-auto rounded-lg border border-app-border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-app-border bg-app-card">
-                    <th className="px-4 py-3 text-left font-medium text-txt-muted">Severity</th>
-                    <th className="px-4 py-3 text-left font-medium text-txt-muted">Event</th>
-                    <th className="px-4 py-3 text-left font-medium text-txt-muted">Message</th>
-                    <th className="px-4 py-3 text-left font-medium text-txt-muted">Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.data.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-txt-muted">
-                        No logs found
-                      </td>
+          {isLoading && (
+            <div style={{ padding: '40px 14px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>Loading…</div>
+          )}
+          {!isLoading && !error && data && (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg3)' }}>
+                      <th style={TH}>sev</th>
+                      <th style={TH}>event_type</th>
+                      <th style={TH}>message</th>
+                      <th style={TH}>time</th>
                     </tr>
-                  )}
-                  {data.data.map(log => (
-                    <LogRow key={log.id} log={log} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-txt-muted">
-                  Page {page} of {totalPages} · {data.total.toLocaleString()} total
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setPage(p => p - 1)}
-                    disabled={page <= 1}
-                    className="px-3 py-1 rounded border border-app-border text-sm text-txt-muted hover:text-txt-primary hover:border-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Prev
-                  </button>
-                  <button
-                    onClick={() => setPage(p => p + 1)}
-                    disabled={page >= totalPages}
-                    className="px-3 py-1 rounded border border-app-border text-sm text-txt-muted hover:text-txt-primary hover:border-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Next
-                  </button>
-                </div>
+                  </thead>
+                  <tbody>
+                    {data.data.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ ...TD, textAlign: 'center', color: 'var(--muted)', padding: '32px 12px' }}>No logs found</td>
+                      </tr>
+                    )}
+                    {data.data.map(log => <LogRow key={log.id} log={log} />)}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </div>
-        )}
-      </Card>
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderTop: '1px solid var(--line)' }}>
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--muted)' }}>page {page} / {totalPages}</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button onClick={() => setPage(p => p - 1)} disabled={page <= 1} style={{ padding: '3px 10px', borderRadius: 'var(--r)', fontSize: 11, border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--sub)', cursor: page <= 1 ? 'not-allowed' : 'pointer', opacity: page <= 1 ? .4 : 1 }}>← prev</button>
+                    <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages} style={{ padding: '3px 10px', borderRadius: 'var(--r)', fontSize: 11, border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--sub)', cursor: page >= totalPages ? 'not-allowed' : 'pointer', opacity: page >= totalPages ? .4 : 1 }}>next →</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,4 +1,13 @@
-import type { DDReport } from './dd-report'
+import type {
+  ReportMeta,
+  StorageData,
+  CompressionData,
+  MTreeData,
+  NetworkPort,
+  SystemHealthData,
+  ReplicationData,
+  AlertsData,
+} from './dd-report'
 
 export type DeviceStatus = 'healthy' | 'warning' | 'critical' | 'unknown'
 
@@ -17,16 +26,29 @@ export interface DeviceOverviewItem {
   active_alerts_critical: number
   active_alerts_warning: number
   device_status: DeviceStatus
+  jobs_ok: number | null
+  jobs_failed: number | null
 }
 
 export interface DeviceReportDetail {
   id: string
   device_id: string
   report_date: string
-  parsed_data: DDReport
+  generated_on: string | null
+  timezone: string | null
+  uptime_days: number | null
   ingested_at: string
   is_valid: boolean
   parse_errors: string | null
+  // Assembled sections (joined from detail tables)
+  meta: ReportMeta
+  storage: StorageData | null
+  compression: CompressionData | null
+  mtrees: MTreeData[]
+  network: { ports: NetworkPort[] }
+  system_health: SystemHealthData | null
+  replication: ReplicationData | null
+  alerts: AlertsData
 }
 
 // ── Alerts ────────────────────────────────────────────────────────────────────
@@ -68,9 +90,11 @@ export interface CompareReportItem {
   id: string
   device_id: string
   report_date: string
-  parsed_data: DDReport
   ingested_at: string
   is_valid: boolean
+  storage_used_percent: number | null
+  compression_factor: number | null
+  active_alerts: number
 }
 
 // ── System Health (extended) ──────────────────────────────────────────────────
@@ -119,6 +143,29 @@ export interface PaginatedLogsResponse {
   total: number
   page: number
   limit: number
+}
+
+// ── Alert Rules ───────────────────────────────────────────────────────────────
+
+export interface AlertRuleItem {
+  id: string
+  metric: string
+  operator: string
+  threshold: number
+  severity: string
+  description: string | null
+  is_active: boolean
+  created_at: string
+}
+
+// ── Storage Runway ────────────────────────────────────────────────────────────
+
+export interface RunwayResult {
+  runway_days: number | null
+  runway_months: number | null
+  total_available_gib: number
+  total_daily_growth_gib: number
+  computed_at: string
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────

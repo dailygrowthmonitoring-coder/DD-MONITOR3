@@ -41,39 +41,33 @@ export function SystemHealthSection({ health }: SystemHealthSectionProps) {
         />
         <Metric
           label="System Availability"
-          value={health.system_availability_percent !== null
-            ? `${health.system_availability_percent}%`
-            : '—'}
+          value={health.system_avail_pct !== null ? `${health.system_avail_pct}%` : '—'}
           valueColor={
-            health.system_availability_percent === 100 ? '#00C853' :
-            health.system_availability_percent !== null && health.system_availability_percent < 99 ? '#FF4444' :
+            health.system_avail_pct === 100 ? '#00C853' :
+            health.system_avail_pct !== null && health.system_avail_pct < 99 ? '#FF4444' :
             '#F0F0F5'
           }
         />
         <Metric
           label="FS Availability"
-          value={health.filesystem_availability_percent !== null
-            ? `${health.filesystem_availability_percent}%`
-            : '—'}
-          valueColor={
-            health.filesystem_availability_percent === 100 ? '#00C853' : '#F0F0F5'
-          }
+          value={health.filesystem_avail_pct !== null ? `${health.filesystem_avail_pct}%` : '—'}
+          valueColor={health.filesystem_avail_pct === 100 ? '#00C853' : '#F0F0F5'}
         />
         <Metric
           label="Memory Total"
-          value={health.memory_total_mib !== null ? formatMib(health.memory_total_mib) : '—'}
+          value={formatMib(health.memory_total_mib)}
         />
         <Metric
           label="Memory Free"
-          value={health.memory_free_mib !== null ? formatMib(health.memory_free_mib) : '—'}
+          value={formatMib(health.memory_free_mib)}
         />
         <Metric
           label="Swap Total"
-          value={health.swap_total_mib !== null ? formatMib(health.swap_total_mib) : '—'}
+          value={formatMib(health.swap_total_mib)}
         />
         <Metric
           label="Swap Free"
-          value={health.swap_free_mib !== null ? formatMib(health.swap_free_mib) : '—'}
+          value={formatMib(health.swap_free_mib)}
         />
         <Metric
           label="NFS Status"
