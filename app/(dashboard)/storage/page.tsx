@@ -42,7 +42,15 @@ export default function StoragePage() {
 
   // KPI aggregations
   const totalProvGib = capacity.reduce((s, d) => s + (d.totalCapacityGib ?? 0), 0);
-  const totalUsedGib = capacity.reduce((s, d) => s + (d.usedGib ?? 0), 0);
+  const totalUsedGib = capacity.reduce((s, d) => {
+    // usedGib may be null when there is insufficient report history for regression;
+    // fall back to computing from currentUsedPercent × totalCapacityGib.
+    const used = d.usedGib ??
+      (d.totalCapacityGib !== null
+        ? (d.currentUsedPercent / 100) * d.totalCapacityGib
+        : 0);
+    return s + used;
+  }, 0);
   const totalFreeGib = totalProvGib - totalUsedGib;
   const minRunway    = capacity.length > 0
     ? Math.min(...capacity.map(d => d.estimatedDaysRemaining ?? Infinity))

@@ -47,7 +47,7 @@ export default function ReportsPage() {
   }, []);
 
   const today        = todayIso();
-  const todayCount   = items.filter(i => i.report.reportDate === today).length;
+  const todayCount   = items.filter(i => i.report.reportDate.substring(0, 10) === today).length;
 
   async function handleDownload(device: DeviceDTO, report: ReportDTO) {
     const result = await exportReport(device.id, report.reportDate);
@@ -88,7 +88,7 @@ export default function ReportsPage() {
                 </div>
                 <div className="rpt-meta">
                   <span>{device.shortName}</span>
-                  <span>{report.reportDate}</span>
+                  <span>{report.reportDate.substring(0, 10)}</span>
                   <span>{report.ingested_at ? formatRelative(report.ingested_at) : '—'}</span>
                   {report.parseErrors && report.parseErrors.length > 0 && (
                     <span style={{ color: 'var(--amber)' }}>

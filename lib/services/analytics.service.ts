@@ -154,16 +154,21 @@ export async function getRunwayEstimate(
         : null;
 
       if (!reportsResult.ok || reportsResult.value.length < 2) {
+        // With exactly 1 report we can still surface current values even though
+        // OLS regression requires ≥ 2 points.
+        const singleRpt = reportsResult.ok && reportsResult.value.length === 1
+          ? reportsResult.value[0]
+          : undefined;
         return {
           deviceId,
           hostname,
-          currentUsedPercent:     0,
+          currentUsedPercent:     singleRpt?.storage.usedPercent.value ?? 0,
           avgDailyGrowthGib:      0,
           estimatedDaysRemaining: null,
           projectedFillDate:      null,
           dataPointsUsed:         reportsResult.ok ? reportsResult.value.length : 0,
-          totalCapacityGib:       totalCapGib,
-          usedGib:                null,
+          totalCapacityGib:       singleRpt?.storage.totalGib.value ?? totalCapGib,
+          usedGib:                singleRpt != null ? singleRpt.storage.usedGib.value : null,
         } satisfies RunwayEstimate;
       }
 

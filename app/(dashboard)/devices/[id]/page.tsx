@@ -64,38 +64,55 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
 
   const alertList = activeAlerts ?? [];
 
-  // Parsed data from the full report JSONB — typed loosely as it's arbitrary depth
+  // Full parsed JSONB from the report detail endpoint.
+  // The API serialises the Report domain entity directly, so deep data lives in
+  // parsedData (ParsedReport shape, snake_case field names from lib/parser/types.ts).
   const pd = report?.parsedData as Record<string, unknown> | null | undefined;
 
-  // Storage values
-  const storageUsedGib   = report?.storageUsedGib   ?? null;
-  const storageTotalGib  = report?.storageTotalGib  ?? null;
-  const storageAvailGib  = report?.storageAvailableGib ?? null;
-  const storagePreComp   = report?.storagePreCompGib ?? null;
-  const storageUsedPct   = report?.storageUsedPercent ?? device.lastUsedPercent ?? 0;
-  const storageClass     = percentToClass(storageUsedPct);
+  // Pull sub-sections out of parsedData
+  const pdStorage   = pd?.storage       as Record<string, unknown> | undefined;
+  const pdComp      = pd?.compression   as Record<string, unknown> | undefined;
+  const pdCompCurr  = pdComp?.currently_used as Record<string, unknown> | undefined;
+  const pdComp7d    = pdComp?.last_7_days    as Record<string, unknown> | undefined;
+  const pdComp24h   = pdComp?.last_24_hours  as Record<string, unknown> | undefined;
+  const pdDisksSumm = (pd?.disks as Record<string, unknown> | undefined)?.summary as Record<string, unknown> | undefined;
+  const pdSysHealth = pd?.system_health as Record<string, unknown> | undefined;
+  const pdNetObj    = pd?.network       as Record<string, unknown> | undefined;
+  const pdMeta      = pd?.meta          as Record<string, unknown> | undefined;
 
-  // Compression
-  const compTotal = report?.compTotalFactor     ?? null;
-  const comp7day  = report?.comp7dayTotalFactor ?? null;
-  const comp24h   = report?.comp24hTotalFactor  ?? null;
+  // Storage values — ParsedReport.storage snake_case field names
+  const storageUsedGib  = typeof pdStorage?.used_gib      === 'number' ? pdStorage.used_gib      as number : null;
+  const storageTotalGib = typeof pdStorage?.total_gib     === 'number' ? pdStorage.total_gib     as number : null;
+  const storageAvailGib = typeof pdStorage?.available_gib === 'number' ? pdStorage.available_gib as number : null;
+  const storagePreComp  = typeof pdStorage?.pre_comp_gib  === 'number' ? pdStorage.pre_comp_gib  as number : null;
+  const storageUsedPct  = typeof pdStorage?.used_percent  === 'number' ? pdStorage.used_percent  as number : device.lastUsedPercent ?? 0;
+  const storageClass    = percentToClass(storageUsedPct);
 
-  // Disks
-  const disksTotal  = report?.disksActive ?? null;
-  const disksInUse  = report?.disksInUse  ?? null;
-  const disksSpare  = report?.disksSpare  ?? null;
-  const disksFailed = report?.disksFailed ?? 0;
+  // Compression — ParsedReport.compression snake_case field names
+  const compTotal = typeof pdCompCurr?.total_factor === 'number' ? pdCompCurr.total_factor as number : null;
+  const comp7day  = typeof pdComp7d?.total_factor   === 'number' ? pdComp7d.total_factor   as number : null;
+  const comp24h   = typeof pdComp24h?.total_factor  === 'number' ? pdComp24h.total_factor  as number : null;
 
-  // System
-  const avail    = report?.sysAvailabilityPct ?? null;
-  const memTotal = report?.memoryTotalMib     ?? null;
-  const memFree  = report?.memoryFreeMib      ?? null;
-  const nfs      = report?.nfsStatus          ?? '—';
-  const cifs     = report?.cifsStatus         ?? '—';
+  // Disks — ParsedReport.disks.summary snake_case field names
+  const disksTotal  = typeof pdDisksSumm?.active_tier_total  === 'number' ? pdDisksSumm.active_tier_total  as number : null;
+  const disksInUse  = typeof pdDisksSumm?.active_tier_in_use === 'number' ? pdDisksSumm.active_tier_in_use as number : null;
+  const disksSpare  = typeof pdDisksSumm?.active_tier_spare  === 'number' ? pdDisksSumm.active_tier_spare  as number : null;
+  const disksFailed = typeof pdDisksSumm?.failed_disks       === 'number' ? pdDisksSumm.failed_disks       as number : 0;
 
-  // Parsed-data sections (available in report detail endpoint)
-  const networkPorts = (pd?.networkPorts ?? pd?.network_ports) as Array<Record<string, unknown>> | undefined;
-  const mtrees       = (pd?.mtrees)                             as Array<Record<string, unknown>> | undefined;
+  // System health — ParsedReport.system_health snake_case field names
+  const avail    = typeof pdSysHealth?.system_availability_percent === 'number' ? pdSysHealth.system_availability_percent as number : null;
+  const memTotal = typeof pdSysHealth?.memory_total_mib            === 'number' ? pdSysHealth.memory_total_mib            as number : null;
+  const memFree  = typeof pdSysHealth?.memory_free_mib             === 'number' ? pdSysHealth.memory_free_mib             as number : null;
+  const nfs      = typeof pdSysHealth?.nfs_status  === 'string' ? pdSysHealth.nfs_status  as string : '—';
+  const cifs     = typeof pdSysHealth?.cifs_status === 'string' ? pdSysHealth.cifs_status as string : '—';
+
+  // Network ports — ParsedReport.network.ports
+  const networkPorts = pdNetObj?.ports as Array<Record<string, unknown>> | undefined;
+  // MTrees — ParsedReport.mtrees
+  const mtrees       = pd?.mtrees      as Array<Record<string, unknown>> | undefined;
+
+  // Uptime from ParsedReport.meta.uptime_days
+  const uptimeDays = typeof pdMeta?.uptime_days === 'number' ? pdMeta.uptime_days as number : null;
 
   const statusCls = statusToClass(device.lastStatus);
 
@@ -117,9 +134,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           </div>
           <div className="page-sub mono">
             {device.model ?? '—'} · {device.serialNumber ?? '—'} · {device.location ?? '—'}
-            {report?.uptimeDays !== null && report?.uptimeDays !== undefined
-              ? ` · ${report.uptimeDays}d uptime`
-              : ''}
+            {uptimeDays !== null ? ` · ${uptimeDays}d uptime` : ''}
           </div>
         </div>
         <div className="page-hd-actions">
