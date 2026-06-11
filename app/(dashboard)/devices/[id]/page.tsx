@@ -47,7 +47,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const { date: dateParam } = await searchParams;
 
   const cookieStore = await cookies();
-  const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+  const cookieHdr   = cookieStore.toString();
 
   const today = new Date().toISOString().substring(0, 10);
   const date  = dateParam ?? today;

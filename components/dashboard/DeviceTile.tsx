@@ -7,18 +7,16 @@ import type { DeviceDTO } from '@/lib/frontend/api';
 
 interface DeviceTileProps {
   readonly device: DeviceDTO;
-  readonly onClick?: () => void;
 }
 
 /** Renders a single device tile for the Overview dom-strip grid. */
-export function DeviceTile({ device, onClick }: DeviceTileProps) {
+export function DeviceTile({ device }: DeviceTileProps) {
   const cls    = statusToClass(device.lastStatus);
   const pct    = device.lastUsedPercent ?? 0;
   const width  = `${Math.min(100, Math.max(0, pct))}%`;
 
   return (
-    <div className={`dom-tile ${cls}`} onClick={onClick} role="button" tabIndex={0}
-      onKeyDown={e => e.key === 'Enter' && onClick?.()}>
+    <div className={`dom-tile ${cls}`}>
       <div className="dom-tile-name">{device.shortName}</div>
       <div className="dom-tile-pct">{pct.toFixed(0)}%</div>
       {/* inline bar */}

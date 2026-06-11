@@ -9,11 +9,10 @@ import type { DeviceDTO } from '@/lib/frontend/api';
 
 interface DomainCardProps {
   readonly device: DeviceDTO;
-  readonly onClick?: () => void;
 }
 
 /** Renders a domain card for the 3×N Domains page grid. */
-export function DomainCard({ device, onClick }: DomainCardProps) {
+export function DomainCard({ device }: DomainCardProps) {
   const cls     = statusToClass(device.lastStatus);
   const pct     = device.lastUsedPercent ?? 0;
   const usedGib = device.lastUsedPercent !== null && device.totalCapacity !== null
@@ -28,8 +27,7 @@ export function DomainCard({ device, onClick }: DomainCardProps) {
   const badgeVariant = cls === 'ok' ? 'ok' as const : cls === 'wa' ? 'wa' as const : cls === 'cr' ? 'cr' as const : 'gr' as const;
 
   return (
-    <div className="dc" onClick={onClick} role="button" tabIndex={0}
-      onKeyDown={e => e.key === 'Enter' && onClick?.()}>
+    <div className="dc">
       <div className="dc-head">
         <div className="dc-name">
           <StatusDot status={device.lastStatus} />

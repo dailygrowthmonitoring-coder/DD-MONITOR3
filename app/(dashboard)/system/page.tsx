@@ -30,7 +30,7 @@ async function getSystemHealth(cookieHdr: string): Promise<SystemHealthDTO | nul
 
 export default async function SystemPage() {
   const cookieStore = await cookies();
-  const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+  const cookieHdr   = cookieStore.toString();
   const health      = await getSystemHealth(cookieHdr);
 
   if (!health) {

@@ -4,6 +4,7 @@
  * 3×N grid of domain cards, one per active device.
  */
 
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { DomainCard } from '@/components/dashboard/DomainCard';
@@ -28,7 +29,7 @@ async function getDevices(cookieHdr: string): Promise<DeviceDTO[]> {
 
 export default async function DomainsPage() {
   const cookieStore = await cookies();
-  const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+  const cookieHdr   = cookieStore.toString();
   const devices     = await getDevices(cookieHdr);
 
   const allReachable = devices.every(d => d.lastStatus !== 'critical');
@@ -53,10 +54,9 @@ export default async function DomainsPage() {
       {devices.length > 0 ? (
         <div className="dc-grid">
           {devices.map(d => (
-            <DomainCard
-              key={d.id}
-              device={d}
-            />
+            <Link key={d.id} href={`/devices/${d.id}`} style={{ textDecoration: 'none' }}>
+              <DomainCard device={d} />
+            </Link>
           ))}
         </div>
       ) : (

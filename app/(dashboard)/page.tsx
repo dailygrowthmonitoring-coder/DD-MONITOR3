@@ -36,7 +36,7 @@ async function serverFetch<T>(path: string): Promise<T | null> {
   try {
     const baseUrl     = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
     const cookieStore = await cookies();
-    const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+    const cookieHdr   = cookieStore.toString();
     const res = await fetch(`${baseUrl}${path}`, {
       cache:   'no-store',
       headers: { Cookie: cookieHdr },
