@@ -1,28 +1,30 @@
-import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import './globals.css'
+import type { Metadata } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
+import './globals.css';
 
-const geist = Geist({
+const geistSans = Geist({
+  variable: '--font-geist-sans',
   subsets:  ['latin'],
-  variable: '--font-geist',
-  display:  'swap',
-})
+});
 
 const geistMono = Geist_Mono({
-  subsets:  ['latin'],
   variable: '--font-geist-mono',
-  display:  'swap',
-})
+  subsets:  ['latin'],
+});
 
 export const metadata: Metadata = {
   title:       'DD Monitor',
-  description: 'Dell Data Domain device monitoring dashboard',
-}
+  description: 'Enterprise storage monitoring for Zain Iraq',
+};
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
-      <body>{children}</body>
+    <html lang="en" className="dark">
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        {children}
+      </body>
     </html>
-  )
+  );
 }

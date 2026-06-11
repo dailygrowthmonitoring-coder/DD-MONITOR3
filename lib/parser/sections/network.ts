@@ -1,44 +1,78 @@
-import type { NetworkData, NetworkPort } from '../../../types/dd-report'
-import type { SectionResult } from '../types'
+/**
+ * Parses network port hardware details from Net Show Hardware in GENERAL STATUS.
+ *
+ * Table format (split on 2+ spaces):
+ *   Port    Speed      Duplex    Supp Speeds      Hardware Address    Physical   Link Status   State
+ *   -----   --------   -------   --------------   -----------------   --------   -----------   -------
+ *   ethMa   unknown    unknown   10/100/1000      00:60:16:ab:71:fa   Copper     unknown       down
+ *   eth1a   1000Mb/s   full      100/1000/10000   00:60:16:a8:df:34   Copper     yes           running
+ *   eth1d   unknown    unknown   100/1000/10000   00:60:16:a8:df:37   Copper     no            up
+ *
+ * Columns: Port[0], Speed[1], Duplex[2], Supp Speeds[3] (skipped),
+ *          Hardware Address[4], Physical[5], Link Status[6], State[7]
+ *
+ * eth1d is notable: Link Status = "no" but State = "up" — both must be captured.
+ */
 
-// eth1a   1000Mb/s   full      100/1000/10000   00:60:16:a8:df:34   Copper     yes           running
-// Groups: 1=port_name 2=speed 3=duplex (skip supported speeds) 4=mac 5=port_type 6=autoneg 7=link_status
-const RE_PORT_ROW =
-  /^(eth\w+)\s+([\w/]+)\s+(\w+)\s+[\w/]+\s+([\w:]+)\s+(\w+)\s+(\w+)\s+(\w+)/gm
+import type { NetworkPort, NetworkData, SectionResult } from '../types';
+import { extractSection, splitColumns } from '../utils/normalize';
 
-export function parseNetwork(text: string): SectionResult<NetworkData> {
+export function parseNetwork(lines: string[]): SectionResult<NetworkData> {
   try {
-    const sectionIdx = text.indexOf('Net Show Hardware')
-    if (sectionIdx === -1) {
-      return { value: { ports: [] }, error: 'Net Show Hardware section not found' }
+    const section = extractSection(lines, 'GENERAL STATUS');
+    if (section.length === 0) {
+      return { value: { ports: [] }, error: 'GENERAL STATUS section not found for network' };
     }
 
-    const after  = text.slice(sectionIdx)
-    const endIdx = after.search(/\n\n\n/)
-    const window = endIdx > 0 ? after.slice(0, endIdx) : after.slice(0, 2000)
+    // Find "Net Show Hardware" subsection header
+    let headerIdx = -1;
+    for (let i = 0; i < section.length; i++) {
+      if ((section[i] ?? '').toLowerCase() === 'net show hardware') {
+        headerIdx = i;
+        break;
+      }
+    }
+    if (headerIdx === -1) {
+      return { value: { ports: [] }, error: 'Net Show Hardware not found in GENERAL STATUS' };
+    }
 
-    const ports: NetworkPort[] = []
-    const re = RE_PORT_ROW
-    re.lastIndex = 0
-    let match: RegExpExecArray | null
+    const dashRe = /^-{3,}/;
+    // 3-dash table: skip 2 dashes (section underline + column underline) to reach data rows
+    let dashCount = 0;
+    let dataStart = -1;
+    for (let i = headerIdx + 1; i < section.length; i++) {
+      if (dashRe.test(section[i] ?? '')) {
+        dashCount++;
+        if (dashCount === 2) { dataStart = i + 1; break; }
+      }
+    }
+    if (dataStart === -1) return { value: { ports: [] }, error: 'Net Show Hardware: no table found' };
 
-    while ((match = re.exec(window)) !== null) {
+    // Collect data rows until closing dashes
+    const ports: NetworkPort[] = [];
+    for (let i = dataStart; i < section.length; i++) {
+      const line = section[i] ?? '';
+      if (dashRe.test(line)) break;
+      // Port names always start with "eth" in this file
+      if (!line.startsWith('eth')) continue;
+
+      const cols = splitColumns(line);
+      // cols[0]=Port, [1]=Speed, [2]=Duplex, [3]=SuppSpeeds, [4]=HW Addr, [5]=Physical, [6]=LinkStatus, [7]=State
+      if (cols.length < 8) continue;
+
       ports.push({
-        port_name:   match[1],
-        speed:       match[2],
-        duplex:      match[3],
-        mac_address: match[4],
-        port_type:   match[5],
-        autoneg:     match[6],
-        link_status: match[7],
-      })
+        name:             cols[0] ?? '',
+        speed:            cols[1] ?? '',
+        duplex:           cols[2] ?? '',
+        physical:         cols[5] ?? '',
+        hardware_address: cols[4] ?? null,
+        link_status:      cols[6] ?? '',
+        state:            cols[7] ?? '',
+      });
     }
 
-    return { value: { ports }, error: null }
-  } catch (err) {
-    return {
-      value: { ports: [] },
-      error: `network parse failed: ${err instanceof Error ? err.message : String(err)}`,
-    }
+    return { value: { ports }, error: null };
+  } catch (e) {
+    return { value: { ports: [] }, error: `network: ${e instanceof Error ? e.message : String(e)}` };
   }
 }

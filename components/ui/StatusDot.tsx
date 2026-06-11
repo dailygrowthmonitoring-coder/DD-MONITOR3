@@ -1,25 +1,22 @@
-import type { DeviceStatus } from '@/types/dashboard'
+/**
+ * StatusDot — animated status indicator dot.
+ * ok = green static, wa = amber pulse, cr = red fast pulse, gr = grey.
+ */
+
+import { statusToClass } from '@/lib/frontend/format';
 
 interface StatusDotProps {
-  status: DeviceStatus
-  size?: 'sm' | 'md'
+  readonly status: string;
+  readonly className?: string;
 }
 
-const COLOR: Record<DeviceStatus, string> = {
-  healthy:  '#00C853',
-  warning:  '#F5A623',
-  critical: '#FF4444',
-  unknown:  '#6B6B80',
-}
-
-export function StatusDot({ status, size = 'md' }: StatusDotProps) {
-  const dim = size === 'sm' ? 'w-2 h-2' : 'w-2.5 h-2.5'
+/** Renders a small colored dot with pulse animation for warning/critical. */
+export function StatusDot({ status, className }: StatusDotProps) {
+  const cls = statusToClass(status);
   return (
     <span
-      className={`${dim} rounded-full flex-shrink-0 inline-block`}
-      style={{ backgroundColor: COLOR[status] }}
-      aria-label={`Status: ${status}`}
-      role="img"
+      className={`dot ${cls}${className ? ` ${className}` : ''}`}
+      aria-label={status}
     />
-  )
+  );
 }

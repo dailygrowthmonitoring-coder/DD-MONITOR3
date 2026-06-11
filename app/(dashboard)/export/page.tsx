@@ -1,142 +1,179 @@
-'use client'
-import { useState } from 'react'
-import { format, subDays } from 'date-fns'
-import { useDevices } from '@/lib/hooks/use-devices'
-import { DATA_RETENTION_DAYS } from '@/lib/constants/ui'
+'use client';
 
-const today   = format(new Date(), 'yyyy-MM-dd')
-const minDate = format(subDays(new Date(), DATA_RETENTION_DAYS), 'yyyy-MM-dd')
+/**
+ * Export page — /export
+ *
+ * Device + date selector with HTML report download.
+ */
 
-const FORMAT_OPTS = [
-  { label: 'CSV',  val: 'csv',  desc: 'Comma-separated, opens in Excel' },
-  { label: 'JSON', val: 'json', desc: 'Structured data for integrations' },
-  { label: 'PDF',  val: 'pdf',  desc: 'Formatted report for printing' },
-]
-const DATA_OPTS = [
-  { label: 'Storage Snapshots', val: 'storage' },
-  { label: 'Compression Stats', val: 'compression' },
-  { label: 'Alerts',            val: 'alerts' },
-  { label: 'System Logs',       val: 'logs' },
-  { label: 'Full Report',       val: 'full' },
-]
-
-const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
-const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
-const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
-const FIELD_LABEL: React.CSSProperties = { fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }
-const INPUT: React.CSSProperties = { height: 32, borderRadius: 'var(--r)', border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 12, padding: '0 10px', fontFamily: 'var(--font-geist-mono),monospace', outline: 'none', width: '100%' }
+import { useEffect, useState } from 'react';
+import { Panel } from '@/components/ui/Panel';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { fetchDevices, exportReport } from '@/lib/frontend/api';
+import { todayIso, formatGib, formatPercent } from '@/lib/frontend/format';
+import type { DeviceDTO } from '@/lib/frontend/api';
 
 export default function ExportPage() {
-  const [device, setDevice]   = useState<string>('all')
-  const [from,   setFrom]     = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
-  const [to,     setTo]       = useState(today)
-  const [fmt,    setFmt]      = useState('csv')
-  const [dtype,  setDtype]    = useState('storage')
+  const [devices, setDevices]   = useState<DeviceDTO[]>([]);
+  const [deviceId, setDeviceId] = useState<string>('');
+  const [date, setDate]         = useState(todayIso());
+  const [loading, setLoading]   = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError]       = useState<string | null>(null);
 
-  const { devices, isLoading } = useDevices()
+  useEffect(() => {
+    async function load() {
+      const res = await fetchDevices();
+      if (res.success && res.data.length > 0) {
+        setDevices(res.data);
+        setDeviceId(res.data[0]?.id ?? '');
+      }
+      setLoading(false);
+    }
+    void load();
+  }, []);
 
-  const selectedDevice = device === 'all' ? `All (${devices.length})` : (devices.find(d => d.id === device)?.hostname ?? device.slice(0, 8))
-  const selectedData   = DATA_OPTS.find(o => o.val === dtype)?.label ?? dtype
+  const selectedDevice = devices.find(d => d.id === deviceId);
+
+  async function handleExport() {
+    if (!deviceId) return;
+    setExporting(true);
+    setError(null);
+    const result = await exportReport(deviceId, date);
+    if (!result.ok) {
+      setError(result.message);
+    } else {
+      const a = document.createElement('a');
+      a.href     = result.blobUrl;
+      a.download = result.fileName;
+      a.click();
+      URL.revokeObjectURL(result.blobUrl);
+    }
+    setExporting(false);
+  }
 
   return (
-    <div className="anim-fadein">
-      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Export</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
-            download device reports and metrics
-          </div>
+    <>
+      <div className="page-hd">
+        <div className="page-hd-left">
+          <h1 className="page-title">Export</h1>
+          <div className="page-sub">Generate and download device reports</div>
         </div>
       </div>
 
-      {/* Info banner */}
-      <div style={{ margin: '0 24px 14px', padding: '10px 14px', background: 'var(--blue-bg)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 'var(--r)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <span style={{ color: 'var(--blue)', fontSize: 14, lineHeight: '18px', flexShrink: 0 }}>ℹ</span>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 2 }}>Export coming in Phase 8</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Configure parameters below — the download endpoint will be wired up in the next release.</div>
-        </div>
-      </div>
+      <div className="cols-2">
+        {/* Form */}
+        <Panel title="Export Report" noPadding>
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {loading ? (
+              <EmptyState loading />
+            ) : (
+              <>
+                {error && (
+                  <div className="auth-error">{error}</div>
+                )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 24px 14px' }}>
-        {/* Scope */}
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>scope</div></div>
-          <div style={{ padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <div style={FIELD_LABEL}>device</div>
-              <select value={device} onChange={e => setDevice(e.target.value)} style={{ ...INPUT }}>
-                <option value="all">All Devices</option>
-                {!isLoading && devices.map(d => (
-                  <option key={d.id} value={d.id}>{d.hostname}{d.location ? ` (${d.location})` : ''}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <div>
-                <div style={FIELD_LABEL}>from</div>
-                <input type="date" value={from} min={minDate} max={to} onChange={e => setFrom(e.target.value)} style={{ ...INPUT }} />
-              </div>
-              <div>
-                <div style={FIELD_LABEL}>to</div>
-                <input type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} style={{ ...INPUT }} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Format */}
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>format &amp; data</div></div>
-          <div style={{ padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <div style={FIELD_LABEL}>export format</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {FORMAT_OPTS.map(o => (
-                  <label key={o.val} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r)', border: `1px solid ${fmt === o.val ? 'var(--accent)' : 'var(--line)'}`, background: fmt === o.val ? 'var(--accent-glow)' : 'var(--bg3)', cursor: 'pointer' }}>
-                    <input type="radio" name="fmt" value={o.val} checked={fmt === o.val} onChange={() => setFmt(o.val)} style={{ accentColor: 'var(--accent)', flexShrink: 0 }} />
-                    <div>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', fontFamily: 'var(--font-geist-mono),monospace' }}>{o.label}</span>
-                      <span style={{ fontSize: 10.5, color: 'var(--muted)', marginLeft: 8 }}>{o.desc}</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div style={FIELD_LABEL}>data type</div>
-              <select value={dtype} onChange={e => setDtype(e.target.value)} style={{ ...INPUT }}>
-                {DATA_OPTS.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Summary */}
-      <div style={{ padding: '0 24px 20px' }}>
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>summary</div></div>
-          <div style={{ padding: '14px 14px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
-              {[
-                { k: 'device',     v: selectedDevice },
-                { k: 'date_range', v: `${from} → ${to}` },
-                { k: 'format',     v: fmt.toUpperCase() },
-                { k: 'data',       v: selectedData },
-              ].map(kv => (
-                <div key={kv.k}>
-                  <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4 }}>{kv.k}</div>
-                  <div style={{ fontSize: 12, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--text2)' }}>{kv.v}</div>
+                <div className="field">
+                  <label>Device</label>
+                  <select
+                    value={deviceId}
+                    onChange={e => setDeviceId(e.target.value)}
+                  >
+                    {devices.map(d => (
+                      <option key={d.id} value={d.id}>{d.hostname}</option>
+                    ))}
+                  </select>
                 </div>
-              ))}
-            </div>
-            <button disabled style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 'var(--r)', fontSize: 12, fontWeight: 500, border: '1px solid var(--line)', background: 'var(--bg3)', color: 'var(--muted)', cursor: 'not-allowed', opacity: .6 }}>
-              ↓ Download Export <span style={{ fontSize: 10, opacity: .7 }}>(Phase 8)</span>
-            </button>
+
+                <div className="field">
+                  <label>Report Date</label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Format</label>
+                  <select disabled>
+                    <option>HTML (browser print → PDF)</option>
+                  </select>
+                </div>
+
+                <Button
+                  variant="primary"
+                  disabled={!deviceId || exporting}
+                  onClick={() => void handleExport()}
+                >
+                  {exporting ? 'Generating…' : '↓ Download Report'}
+                </Button>
+
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  Reports are available within the 40-day retention window.
+                  To save as PDF, use your browser&apos;s Print → Save as PDF.
+                </div>
+              </>
+            )}
           </div>
-        </div>
+        </Panel>
+
+        {/* Preview */}
+        <Panel title="Report Preview" noPadding>
+          {selectedDevice ? (
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="set-row" style={{ paddingTop: 0 }}>
+                <div className="set-row-label">Device</div>
+                <div className="set-row-val mono">{selectedDevice.hostname}</div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Short Name</div>
+                <div className="set-row-val mono">{selectedDevice.shortName}</div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Location</div>
+                <div className="set-row-val mono">{selectedDevice.location ?? '—'}</div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Last Status</div>
+                <div>
+                  <Badge variant={
+                    selectedDevice.lastStatus === 'healthy'  ? 'ok' :
+                    selectedDevice.lastStatus === 'warning'  ? 'wa' :
+                    selectedDevice.lastStatus === 'critical' ? 'cr' : 'gr'
+                  }>
+                    {selectedDevice.lastStatus.toUpperCase()}
+                  </Badge>
+                </div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Report Date</div>
+                <div className="set-row-val mono">{date}</div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Last Util %</div>
+                <div className="set-row-val mono">
+                  {selectedDevice.lastUsedPercent !== null
+                    ? formatPercent(selectedDevice.lastUsedPercent)
+                    : '—'}
+                </div>
+              </div>
+              <div className="set-row">
+                <div className="set-row-label">Total Capacity</div>
+                <div className="set-row-val mono">
+                  {selectedDevice.totalCapacity !== null
+                    ? formatGib(selectedDevice.totalCapacity)
+                    : '—'}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <EmptyState title="No device selected" />
+          )}
+        </Panel>
       </div>
-    </div>
-  )
+    </>
+  );
 }

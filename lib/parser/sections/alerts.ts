@@ -1,119 +1,129 @@
-import type { AlertEntry, AlertHistoryEntry, AlertsData } from '../../../types/dd-report'
-import type { SectionResult } from '../types'
-import { parseDDAlertDate } from '../utils/date-helpers'
+/**
+ * Parses active alerts and alert history from the GENERAL STATUS section.
+ *
+ * Current Alerts table (3-dash structure, message column = rest of line):
+ *   Id       Post Time                  Severity   Class     Object               Message
+ *   ------   ------------------------   --------   -------   ------------------   ---...---
+ *   p0-273   Mon Mar 10 04:38:22 2025   CRITICAL   Network   Interface Index=20   EVT-NETM-00001: ...
+ *   ------   ------------------------   --------   -------   ------------------   ---...---
+ *   There is 1 active alert.
+ *
+ * Alerts History — same but with an extra Clear Time column:
+ *   p0-273   Mon Mar 10 04:38:22 2025   (active)     CRITICAL   Network   Interface Index=20   EVT-NETM-00001: ...
+ *
+ * CRITICAL: Message column contains embedded spaces/colons. Split on 2+ spaces only —
+ * the last chunk is the full message and must not be re-split.
+ */
 
-// Alert table row — delimited by 3+ spaces between columns
-// Format: "p0-273   Mon Mar 10 04:38:22 2025   CRITICAL   Network   Interface Index=20   EVT-NETM-..."
-// We use a split on "   " (3 spaces) to handle variable-width columns
-const RE_ALERT_COUNT = /There (?:is|are)\s+(\d+)\s+active alert/
+import type { AlertEntry, AlertHistoryEntry, AlertsData, SectionResult } from '../types';
+import { extractSection, splitColumns } from '../utils/normalize';
+import { parseDate } from '../utils/dates';
 
-// History-specific count
-const RE_HISTORY_COUNT = /There (?:is|are)\s+(\d+)\s+historic alert/
+type AlertSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
 
-const VALID_SEVERITIES = new Set(['CRITICAL', 'WARNING', 'INFO'])
-
-function parseSeverity(val: string): 'CRITICAL' | 'WARNING' | 'INFO' {
-  const upper = val.toUpperCase().trim()
-  if (VALID_SEVERITIES.has(upper)) return upper as 'CRITICAL' | 'WARNING' | 'INFO'
-  return 'INFO'
+function normSeverity(s: string): AlertSeverity {
+  const u = s.trim().toUpperCase();
+  if (u === 'CRITICAL' || u === 'WARNING' || u === 'INFO') return u;
+  return 'INFO';
 }
 
-function parseAlertRow(line: string): AlertEntry | null {
-  // Split on 3+ spaces to handle fixed-width columns
-  const cols = line.split(/\s{3,}/).map(s => s.trim()).filter(Boolean)
-  // Expected: [id, post_time, severity, class, object, message]
-  if (cols.length < 6) return null
-
-  const id = cols[0]
-  if (!id.match(/^[a-z]\d+-\d+$/)) return null
-
-  const post_time_raw = cols[1]
-  const post_time = parseDDAlertDate(post_time_raw)
-  if (!post_time) return null
-
-  const severity = parseSeverity(cols[2])
-  const alertClass = cols[3]
-  const object = cols[4]
-  const message = cols.slice(5).join('   ').trim()
-
-  return { id, post_time, severity, class: alertClass, object, message, is_active: true }
-}
-
-function parseHistoryRow(line: string): AlertHistoryEntry | null {
-  // Format: "p0-273   Mon Mar 10 04:38:22 2025   (active)   CRITICAL   Network   Interface Index=20   EVT..."
-  const cols = line.split(/\s{3,}/).map(s => s.trim()).filter(Boolean)
-  if (cols.length < 7) return null
-
-  const id = cols[0]
-  if (!id.match(/^[a-z]\d+-\d+$/)) return null
-
-  const post_time_raw = cols[1]
-  const post_time = parseDDAlertDate(post_time_raw)
-  if (!post_time) return null
-
-  const clearRaw = cols[2]
-  const is_active_entry = clearRaw.toLowerCase().includes('active')
-  const clear_time = is_active_entry ? null : (parseDDAlertDate(clearRaw) ?? null)
-  const status: 'active' | 'cleared' = is_active_entry ? 'active' : 'cleared'
-
-  const severity = parseSeverity(cols[3])
-  const alertClass = cols[4]
-  const object = cols[5]
-  const message = cols.slice(6).join('   ').trim()
-
-  return { id, post_time, clear_time, severity, class: alertClass, object, message, status }
-}
-
-function extractSection(text: string, header: string, stopBefore?: string): string {
-  const idx = text.indexOf(header)
-  if (idx === -1) return ''
-  const after = text.slice(idx)
-  // Stop before a known next section header if provided
-  if (stopBefore) {
-    const stopIdx = after.indexOf(stopBefore)
-    if (stopIdx > 0) return after.slice(0, stopIdx)
+function findTableRows(section: string[], headerText: string): string[] {
+  const dashRe = /^-{3,}/;
+  let headerIdx = -1;
+  const targetLower = headerText.toLowerCase();
+  for (let i = 0; i < section.length; i++) {
+    if ((section[i] ?? '').toLowerCase() === targetLower) {
+      headerIdx = i;
+      break;
+    }
   }
-  const endIdx = after.search(/\n\n\n/)
-  return endIdx > 0 ? after.slice(0, endIdx) : after.slice(0, 3000)
+  if (headerIdx === -1) return [];
+
+  // Table structure: header / dashes#1(section underline) / col-header / dashes#2(col underline) / DATA / dashes#3
+  // Skip 2 dashes lines to land on data
+  let dashCount = 0;
+  let dataStart = -1;
+  for (let i = headerIdx + 1; i < section.length; i++) {
+    if (dashRe.test(section[i] ?? '')) {
+      dashCount++;
+      if (dashCount === 2) { dataStart = i + 1; break; }
+    }
+  }
+  if (dataStart === -1) return [];
+
+  // Collect data rows until closing dashes
+  const rows: string[] = [];
+  for (let i = dataStart; i < section.length; i++) {
+    const line = section[i] ?? '';
+    if (dashRe.test(line)) break;
+    if (line.length > 0) rows.push(line);
+  }
+  return rows;
 }
 
-export function parseAlerts(text: string): SectionResult<AlertsData> {
+export function parseAlerts(lines: string[]): SectionResult<AlertsData> {
   try {
-    // Stop "Current Alerts" window before "Alerts History" to avoid cross-contamination
-    const currentSection = extractSection(text, 'Current Alerts', 'Alerts History')
-    const historySection = extractSection(text, 'Alerts History', 'Recent Alerts')
-
-    const countMatch = RE_ALERT_COUNT.exec(currentSection)
-    const active_count = countMatch ? parseInt(countMatch[1], 10) : 0
-
-    const active: AlertEntry[] = []
-    if (active_count > 0) {
-      const lines = currentSection.split('\n')
-      for (const line of lines) {
-        if (!line.trim() || line.startsWith('-') || line.startsWith('Id') || line.startsWith('There')) continue
-        const entry = parseAlertRow(line)
-        if (entry) active.push(entry)
-      }
+    const section = extractSection(lines, 'GENERAL STATUS');
+    if (section.length === 0) {
+      return { value: null, error: 'GENERAL STATUS section not found for alerts' };
     }
 
-    const history: AlertHistoryEntry[] = []
-    if (historySection) {
-      const lines = historySection.split('\n')
-      for (const line of lines) {
-        if (!line.trim() || line.startsWith('-') || line.startsWith('Id') || line.startsWith('There')) continue
-        const entry = parseHistoryRow(line)
-        if (entry) history.push(entry)
-      }
+    // ── Current Alerts ─────────────────────────────────────────────────────
+    const activeRows = findTableRows(section, 'Current Alerts');
+    const active: AlertEntry[] = [];
+
+    for (const row of activeRows) {
+      const cols = splitColumns(row);
+      // cols: [id, post_time, severity, class, object, message]
+      if (cols.length < 6) continue;
+      const id      = cols[0] ?? '';
+      const postRaw = cols[1] ?? '';
+      const sev     = normSeverity(cols[2] ?? '');
+      const cls     = cols[3] ?? '';
+      const object  = cols[4] ?? '';
+      const message = cols.slice(5).join('  ');
+      if (!id) continue;
+      active.push({ id, post_time: parseDate(postRaw) ?? postRaw, severity: sev, class: cls, object, message });
     }
 
-    return {
-      value: { active_count, active, history },
-      error: null,
+    // Count from summary line
+    let active_count = active.length;
+    for (const line of section) {
+      const m = /There (?:is|are)\s+(\d+)\s+active alert/i.exec(line);
+      if (m?.[1] !== undefined) { active_count = parseInt(m[1], 10); break; }
     }
-  } catch (err) {
-    return {
-      value: { active_count: 0, active: [], history: [] },
-      error: `alerts parse failed: ${err instanceof Error ? err.message : String(err)}`,
+
+    // ── Alerts History ─────────────────────────────────────────────────────
+    const histRows = findTableRows(section, 'Alerts History');
+    const history: AlertHistoryEntry[] = [];
+
+    for (const row of histRows) {
+      const cols = splitColumns(row);
+      // cols: [id, post_time, clear_time|(active), severity, class, object, message]
+      if (cols.length < 7) continue;
+      const id       = cols[0] ?? '';
+      const postRaw  = cols[1] ?? '';
+      const clearRaw = cols[2] ?? '';
+      const sev      = normSeverity(cols[3] ?? '');
+      const cls      = cols[4] ?? '';
+      const object   = cols[5] ?? '';
+      const message  = cols.slice(6).join('  ');
+      if (!id) continue;
+      const isActive = clearRaw.toLowerCase() === '(active)';
+      history.push({
+        id,
+        post_time:  parseDate(postRaw) ?? postRaw,
+        clear_time: isActive ? null : (parseDate(clearRaw) ?? clearRaw),
+        severity:   sev,
+        class:      cls,
+        object,
+        message,
+        status:     isActive ? 'active' : 'cleared',
+      });
     }
+
+    return { value: { active_count, active, history }, error: null };
+  } catch (e) {
+    return { value: null, error: `alerts: ${e instanceof Error ? e.message : String(e)}` };
   }
 }

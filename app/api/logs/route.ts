@@ -1,51 +1,74 @@
-import type { NextRequest } from 'next/server'
-import { z } from 'zod'
-import { requireAuth } from '@/lib/auth/validate-session'
-import { getLogs } from '@/lib/services/logs'
-import { logEvent } from '@/lib/services/log'
+/**
+ * GET /api/logs
+ *
+ * Returns paginated system event logs. Used by the Logs dashboard page.
+ *
+ * Query params (logsQuerySchema):
+ *   device_id:  UUID     (optional)
+ *   event_type: enum     (ingestion | parse | alert_evaluation | alert_sent | cleanup | auth | export)
+ *   severity:   enum     (INFO | WARNING | ERROR)
+ *   from:       ISO date (optional)
+ *   to:         ISO date (optional)
+ *   limit:      number   (default 50, max 200)
+ *   offset:     number   (default 0)
+ *
+ * Auth: Supabase session required.
+ */
 
-const VALID_SEVERITIES = ['INFO', 'WARNING', 'ERROR'] as const
+import { parseSchema, logsQuerySchema } from '@/lib/validation';
+import { getLogs } from '@/lib/services';
+import type { LogFilters } from '@/lib/services';
+import { EventType, LogSeverity } from '@/lib/domain';
+import {
+  requireSession,
+  jsonOk,
+  jsonErr,
+  logRequest,
+  type PaginationMeta,
+} from '../_lib/route-helpers';
 
-const QuerySchema = z.object({
-  severity:   z.enum(VALID_SEVERITIES).optional(),
-  event_type: z.string().max(64).optional(),
-  page:       z.coerce.number().int().min(1).default(1),
-  limit:      z.coerce.number().int().min(1).max(100).default(40),
-})
+export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest): Promise<Response> {
-  const auth = await requireAuth()
-  if (auth instanceof Response) return auth
+export async function GET(request: Request): Promise<Response> {
+  const start         = Date.now();
+  const correlationId = crypto.randomUUID();
+  const path          = '/api/logs';
 
-  const url = new URL(request.url)
-  let query: z.infer<typeof QuerySchema>
-  try {
-    query = QuerySchema.parse(Object.fromEntries(url.searchParams.entries()))
-  } catch {
-    return Response.json(
-      { error: 'Invalid query parameters', code: 'VALIDATION_ERROR' },
-      { status: 400 }
-    )
+  const authResult = await requireSession(request);
+  if (!authResult.ok) {
+    logRequest('GET', path, 401, Date.now() - start, correlationId);
+    return jsonErr(authResult.error);
   }
 
-  try {
-    const result = await getLogs({
-      severity:   query.severity,
-      event_type: query.event_type,
-      page:       query.page,
-      limit:      query.limit,
-    })
-    return Response.json(result)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    await logEvent({
-      event_type: 'API_ERROR',
-      message:    `GET /api/logs: ${message}`,
-      severity:   'ERROR',
-    })
-    return Response.json(
-      { error: 'Failed to fetch logs', code: 'DB_ERROR' },
-      { status: 500 }
-    )
+  const url         = new URL(request.url);
+  const queryResult = parseSchema(logsQuerySchema, Object.fromEntries(url.searchParams));
+  if (!queryResult.ok) {
+    logRequest('GET', path, 400, Date.now() - start, correlationId);
+    return jsonErr(queryResult.error);
   }
+
+  const { device_id, event_type, severity, from, to, limit, offset } = queryResult.value;
+
+  const filters: LogFilters = {
+    ...(device_id   !== undefined ? { deviceId:   device_id            } : {}),
+    ...(event_type  !== undefined ? { eventType:  event_type as EventType   } : {}),
+    ...(severity    !== undefined ? { severity:   severity  as LogSeverity  } : {}),
+    ...(from        !== undefined ? { fromDate:   from  } : {}),
+    ...(to          !== undefined ? { toDate:     to    } : {}),
+  };
+
+  const result = await getLogs(filters, limit, offset);
+
+  const status = result.ok ? 200 : result.error.httpStatus;
+  logRequest('GET', path, status, Date.now() - start, correlationId);
+
+  if (!result.ok) return jsonErr(result.error);
+
+  const meta: PaginationMeta = {
+    total:   result.value.length + offset,
+    limit,
+    offset,
+    hasMore: result.value.length === limit,
+  };
+  return jsonOk(result.value, meta);
 }

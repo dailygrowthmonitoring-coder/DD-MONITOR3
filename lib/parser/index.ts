@@ -1,82 +1,183 @@
-import type { DDReport } from '../../types/dd-report'
-import type { ParseResult } from './types'
-import { parseGeneralInfo }   from './sections/general-info'
-import { parseStorage }       from './sections/storage'
-import { parseCompression }   from './sections/compression'
-import { parseMtrees }        from './sections/mtrees'
-import { parseDiskGroups }    from './sections/disk-groups'
-import { parsePerformance }   from './sections/performance'
-import { parseBackupSummary } from './sections/backup-summary'
-import { parseAlerts }        from './sections/alerts'
-import { parseNetwork }       from './sections/network'
-import { parseSystemHealth }  from './sections/system-health'
-import { parseReplication }   from './sections/replication'
+/**
+ * Layer 1 — Parser entry point.
+ *
+ * parseAutosupport() is the single public export. It:
+ *   1. Normalises the raw text into a trimmed, blank-filtered line array (once).
+ *   2. Runs each section parser on that shared array.
+ *   3. Collects per-section errors without ever throwing.
+ *   4. Returns a ParseResult with fully-typed data.
+ *
+ * Consumed by: IngestionService (Layer 5).
+ * Imports: lib/parser/* only. NO lib/domain, NO lib/services, NO DB.
+ */
 
-export function parseReport(rawText: string): ParseResult {
-  const parse_errors: string[] = []
+import type { ParseResult, ParsedReport, ParseError, DisksData, AlertsData, NetworkData } from './types';
+import { normalizeLines } from './utils/normalize';
+import { parseGeneralInfo }  from './sections/general-info';
+import { parseServerUsage }  from './sections/server-usage';
+import { parseGeneralStatus } from './sections/general-status';
+import { parseAlerts }       from './sections/alerts';
+import { parseNetwork }      from './sections/network';
+import { parseEnclosures }   from './sections/enclosures';
+import { parseDisks }        from './sections/disks';
+import { parseMtrees }       from './sections/mtrees';
+import { parseLicenses }     from './sections/licenses';
+import { parseReplication }  from './sections/replication';
+import { parseHardware }     from './sections/hardware';
 
-  const metaResult = parseGeneralInfo(rawText)
-  if (metaResult.error || !metaResult.value) {
-    parse_errors.push(`meta: ${metaResult.error ?? 'unknown error'}`)
+const EMPTY_ALERTS: AlertsData   = { active_count: 0, active: [], history: [] };
+const EMPTY_NETWORK: NetworkData = { ports: [] };
+const EMPTY_DISKS: DisksData = {
+  summary: {
+    active_tier_total: null, active_tier_in_use: null, active_tier_spare: null,
+    cache_tier_total: null, cache_tier_in_use: null,
+    failed_disks: 0, overall_status: null, proactive_check: null,
+  },
+  drives: [],
+};
+
+/**
+ * Parse a complete DD autosupport text file into a typed ParsedReport.
+ *
+ * @param rawText - Full UTF-8 content of one autosupport .txt file.
+ * @returns ParseResult — always present; parse_errors[] is empty on full success.
+ */
+export function parseAutosupport(rawText: string): ParseResult {
+  const errors: ParseError[] = [];
+  const sectionsFound: string[] = [];
+
+  // Normalise once; all section parsers receive this shared array.
+  const lines = normalizeLines(rawText);
+
+  // ── meta (critical) ────────────────────────────────────────────────────
+  const metaResult = parseGeneralInfo(lines);
+  if (metaResult.error !== null || metaResult.value === null) {
+    errors.push({ section: 'meta', message: metaResult.error ?? 'unknown error' });
+  } else {
+    sectionsFound.push('meta');
   }
   const meta = metaResult.value ?? {
-    generated_on: new Date().toISOString(),
+    generated_on: new Date().toISOString().slice(0, 19),
+    generated_epoch: null,
     timezone: 'UTC',
     hostname: 'unknown',
-    model: null,
-    serial_number: null,
-    chassis_serial: null,
-    os_version: null,
-    hw_revision: null,
-    location: null,
-    uptime_days: null,
-    data_encryption_enabled: false,
-    ha_enabled: false,
+    location: null, model: null, os_version: null,
+    serial_number: null, chassis_serial: null, hw_revision: null,
+    admin_email: null, uptime_days: null,
+    data_encryption_enabled: false, ssd_shelf_present: false, ha_enabled: false,
+  };
+
+  // ── storage + compression ──────────────────────────────────────────────
+  const { storage: storageResult, compression: compressionResult } = parseServerUsage(lines);
+  if (storageResult.error !== null) {
+    errors.push({ section: 'storage', message: storageResult.error });
+  } else if (storageResult.value !== null) {
+    sectionsFound.push('storage');
+  }
+  if (compressionResult.error !== null) {
+    errors.push({ section: 'compression', message: compressionResult.error });
+  } else if (compressionResult.value !== null) {
+    sectionsFound.push('compression');
   }
 
-  const storageResult = parseStorage(rawText)
-  if (storageResult.error) parse_errors.push(`storage: ${storageResult.error}`)
+  // ── system_health + disk_summary ────────────────────────────────────────
+  const { system_health: healthResult, disk_summary: diskSumResult } = parseGeneralStatus(lines);
+  if (healthResult.error !== null) {
+    errors.push({ section: 'system_health', message: healthResult.error });
+  } else if (healthResult.value !== null) {
+    sectionsFound.push('system_health');
+  }
 
-  const compressionResult = parseCompression(rawText)
-  if (compressionResult.error) parse_errors.push(`compression: ${compressionResult.error}`)
+  // ── alerts ─────────────────────────────────────────────────────────────
+  const alertsResult = parseAlerts(lines);
+  if (alertsResult.error !== null) {
+    errors.push({ section: 'alerts', message: alertsResult.error });
+  } else {
+    sectionsFound.push('alerts');
+  }
 
-  const mtreesResult = parseMtrees(rawText)
-  if (mtreesResult.error) parse_errors.push(`mtrees: ${mtreesResult.error}`)
+  // ── network ─────────────────────────────────────────────────────────────
+  const networkResult = parseNetwork(lines);
+  if (networkResult.error !== null) {
+    errors.push({ section: 'network', message: networkResult.error });
+  } else if ((networkResult.value?.ports.length ?? 0) > 0) {
+    sectionsFound.push('network');
+  }
 
-  const diskGroupsResult = parseDiskGroups(rawText)
-  if (diskGroupsResult.error) parse_errors.push(`disk_groups: ${diskGroupsResult.error}`)
+  // ── enclosures ──────────────────────────────────────────────────────────
+  const enclosuresResult = parseEnclosures(lines);
+  if (enclosuresResult.error !== null) {
+    errors.push({ section: 'enclosures', message: enclosuresResult.error });
+  } else if ((enclosuresResult.value?.length ?? 0) > 0) {
+    sectionsFound.push('enclosures');
+  }
 
-  const performanceResult = parsePerformance(rawText)
-  if (performanceResult.error) parse_errors.push(`performance: ${performanceResult.error}`)
+  // ── disk drives ─────────────────────────────────────────────────────────
+  const drivesResult = parseDisks(lines);
+  if (drivesResult.error !== null) {
+    errors.push({ section: 'disks', message: drivesResult.error });
+  } else if ((drivesResult.value?.length ?? 0) > 0) {
+    sectionsFound.push('disks');
+  }
 
-  const backupResult = parseBackupSummary(rawText)
-  // backup_summary is optional — not a fatal error if missing
+  // ── mtrees ──────────────────────────────────────────────────────────────
+  const mtreesResult = parseMtrees(lines);
+  if (mtreesResult.error !== null) {
+    errors.push({ section: 'mtrees', message: mtreesResult.error });
+  } else if ((mtreesResult.value?.length ?? 0) > 0) {
+    sectionsFound.push('mtrees');
+  }
 
-  const alertsResult = parseAlerts(rawText)
-  if (alertsResult.error) parse_errors.push(`alerts: ${alertsResult.error}`)
+  // ── licenses ────────────────────────────────────────────────────────────
+  const licensesResult = parseLicenses(lines);
+  if (licensesResult.error !== null) {
+    errors.push({ section: 'licenses', message: licensesResult.error });
+  } else if (licensesResult.value !== null) {
+    sectionsFound.push('licenses');
+  }
 
-  const networkResult = parseNetwork(rawText)
-  if (networkResult.error) parse_errors.push(`network: ${networkResult.error}`)
+  // ── replication ─────────────────────────────────────────────────────────
+  const replicationResult = parseReplication(lines);
+  if (replicationResult.error !== null) {
+    errors.push({ section: 'replication', message: replicationResult.error });
+  } else if (replicationResult.value !== null) {
+    sectionsFound.push('replication');
+  }
 
-  const systemHealthResult = parseSystemHealth(rawText)
-  if (systemHealthResult.error) parse_errors.push(`system_health: ${systemHealthResult.error}`)
+  // ── hardware ────────────────────────────────────────────────────────────
+  const hardwareResult = parseHardware(lines);
+  if (hardwareResult.error !== null) {
+    errors.push({ section: 'hardware', message: hardwareResult.error });
+  } else if (hardwareResult.value !== null) {
+    sectionsFound.push('hardware');
+  }
 
-  const replicationResult = parseReplication(rawText)
-  if (replicationResult.error) parse_errors.push(`replication: ${replicationResult.error}`)
+  // ── assemble DisksData ───────────────────────────────────────────────────
+  const diskSummaryValue = diskSumResult.value;
+  const disks: DisksData = diskSummaryValue !== null
+    ? { summary: diskSummaryValue, drives: drivesResult.value ?? [] }
+    : EMPTY_DISKS;
 
-  const data: DDReport = {
+  // ── assemble ParsedReport ───────────────────────────────────────────────
+  const data: ParsedReport = {
     meta,
-    storage:            storageResult.value,
-    compression:        compressionResult.value,
-    mtrees:             mtreesResult.value ?? [],
-    disk_groups:        diskGroupsResult.value ?? [],
-    performance_metrics: performanceResult.value ?? [],
-    backup_summary:     backupResult.value,
-    alerts:             alertsResult.value ?? { active_count: 0, active: [], history: [] },
-    network:            networkResult.value ?? { ports: [] },
-    system_health:      systemHealthResult.value,
-    replication:        replicationResult.value,
-  }
+    storage:     storageResult.value ?? null,
+    compression: compressionResult.value ?? null,
+    system_health: healthResult.value ?? null,
+    disks,
+    enclosures:  enclosuresResult.value ?? [],
+    network:     networkResult.value ?? EMPTY_NETWORK,
+    alerts:      alertsResult.value ?? EMPTY_ALERTS,
+    mtrees:      mtreesResult.value ?? [],
+    licenses:    licensesResult.value ?? null,
+    replication: replicationResult.value ?? null,
+    hardware:    hardwareResult.value ?? null,
+  };
 
-  return { data, parse_errors }
+  return {
+    success: metaResult.value !== null && meta.hostname !== 'unknown',
+    data,
+    parse_errors:   errors,
+    sections_found: sectionsFound,
+  };
 }

@@ -1,58 +1,75 @@
-import type { NextRequest } from 'next/server'
-import { z } from 'zod'
-import { requireAuth } from '@/lib/auth/validate-session'
-import { getAlerts } from '@/lib/services/alerts'
-import { logEvent } from '@/lib/services/log'
+/**
+ * GET /api/alerts
+ *
+ * Returns a paginated, filterable list of alerts across the fleet.
+ * Used by the Alerts dashboard page.
+ *
+ * Query params (alertsQuerySchema):
+ *   device_id: UUID           (optional)
+ *   severity:  CRITICAL|WARNING|INFO  (optional)
+ *   active:    boolean        (default false — true returns only uncleared alerts)
+ *   from:      ISO date       (optional)
+ *   to:        ISO date       (optional)
+ *   limit:     number         (default 50, max 200)
+ *   offset:    number         (default 0)
+ *
+ * Auth: Supabase session required.
+ */
 
-const QuerySchema = z.object({
-  device_id: z.string().uuid().optional(),
-  severity: z.enum(['CRITICAL', 'WARNING', 'INFO']).optional(),
-  is_active: z
-    .enum(['true', 'false'])
-    .transform(v => v === 'true')
-    .optional(),
-  from: z.string().datetime({ offset: true }).optional(),
-  to: z.string().datetime({ offset: true }).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-})
+import { parseSchema, alertsQuerySchema } from '@/lib/validation';
+import { getAlerts } from '@/lib/services';
+import type { AlertFilters } from '@/lib/services';
+import { AlertSeverity } from '@/lib/domain';
+import {
+  requireSession,
+  jsonOk,
+  jsonErr,
+  logRequest,
+  type PaginationMeta,
+} from '../_lib/route-helpers';
 
-export async function GET(request: NextRequest): Promise<Response> {
-  const auth = await requireAuth()
-  if (auth instanceof Response) return auth
+export const dynamic = 'force-dynamic';
 
-  const url = new URL(request.url)
-  let query: z.infer<typeof QuerySchema>
-  try {
-    query = QuerySchema.parse(Object.fromEntries(url.searchParams.entries()))
-  } catch {
-    return Response.json(
-      { error: 'Invalid query parameters', code: 'VALIDATION_ERROR' },
-      { status: 400 }
-    )
+export async function GET(request: Request): Promise<Response> {
+  const start         = Date.now();
+  const correlationId = crypto.randomUUID();
+  const path          = '/api/alerts';
+
+  const authResult = await requireSession(request);
+  if (!authResult.ok) {
+    logRequest('GET', path, 401, Date.now() - start, correlationId);
+    return jsonErr(authResult.error);
   }
 
-  try {
-    const result = await getAlerts({
-      device_id: query.device_id,
-      severity: query.severity,
-      is_active: query.is_active,
-      from: query.from,
-      to: query.to,
-      limit: query.limit,
-      offset: query.offset,
-    })
-    return Response.json(result)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    await logEvent({
-      event_type: 'API_ERROR',
-      message: `GET /api/alerts: ${message}`,
-      severity: 'ERROR',
-    })
-    return Response.json(
-      { error: 'Failed to fetch alerts', code: 'DB_ERROR' },
-      { status: 500 }
-    )
+  const url         = new URL(request.url);
+  const queryResult = parseSchema(alertsQuerySchema, Object.fromEntries(url.searchParams));
+  if (!queryResult.ok) {
+    logRequest('GET', path, 400, Date.now() - start, correlationId);
+    return jsonErr(queryResult.error);
   }
+
+  const { device_id, severity, active, from, to, limit, offset } = queryResult.value;
+
+  const filters: AlertFilters = {
+    ...(device_id !== undefined ? { deviceId: device_id } : {}),
+    ...(severity  !== undefined ? { severity: severity as AlertSeverity } : {}),
+    ...(active                  ? { isActive: true } : {}),
+    ...(from      !== undefined ? { fromDate: from } : {}),
+    ...(to        !== undefined ? { toDate:   to   } : {}),
+  };
+
+  const result = await getAlerts(filters, limit, offset);
+
+  const status = result.ok ? 200 : result.error.httpStatus;
+  logRequest('GET', path, status, Date.now() - start, correlationId);
+
+  if (!result.ok) return jsonErr(result.error);
+
+  const meta: PaginationMeta = {
+    total:   result.value.length + offset,
+    limit,
+    offset,
+    hasMore: result.value.length === limit,
+  };
+  return jsonOk(result.value, meta);
 }

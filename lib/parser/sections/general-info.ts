@@ -1,120 +1,96 @@
-import type { ReportMeta } from '../../../types/dd-report'
-import type { SectionResult } from '../types'
-import { parseIsoDate } from '../utils/date-helpers'
+/**
+ * Parses device identity and report metadata from the GENERAL INFO section.
+ *
+ * Source format — KEY=VALUE lines, one per logical line (blank lines between):
+ *   GENERATED_ON=Mon Mar 10 06:48:00 AST 2025
+ *   GENERATED_EPOCH_TIME=1741578480
+ *   TIME_ZONE=Asia/Baghdad
+ *   VERSION=Data Domain OS 6.2.0.30-629757
+ *   SYSTEM_SERIALNO=CKM00193901494
+ *   CHASSIS_SERIALNO=FCNCS190702089
+ *   MODEL_NO=DD6300
+ *   HW_REVISION=1
+ *   DATA_ENCRYPTION_ENABLED=Yes
+ *   SSD_SHELF_PRESENT=NO
+ *   HOSTNAME=DD6300BSR.iq.zain.com
+ *   LOCATION=Basra
+ *   ADMIN_EMAIL=DD6300BSR@iq.zain.com
+ *   HA_ENABLED=false
+ *   UPTIME= 06:48:03 up 1754 days, 16:17,  0 users,  load average: 3.31, 3.06, 3.16
+ */
 
-// Matches: "GENERATED: 2025-03-10 06:48:06 AST"
-const RE_GENERATED = /GENERATED:\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)/
+import type { ReportMeta, SectionResult } from '../types';
+import { extractSection } from '../utils/normalize';
+import { parseDate } from '../utils/dates';
 
-// Matches: "protocol.gui.ddem.inventory.1.host_name = DD6300BSR.iq.zain.com"
-const RE_HOSTNAME = /protocol\.gui\.ddem\.inventory\.1\.host_name\s*=\s*(\S+)/
-
-// Matches: "protocol.gui.ddem.inventory.1.model = DD6300"
-const RE_MODEL = /protocol\.gui\.ddem\.inventory\.1\.model\s*=\s*(\S+)/
-
-// Matches: "protocol.gui.ddem.inventory.1.os = 6.2.0.30-629757"
-const RE_OS_VERSION = /protocol\.gui\.ddem\.inventory\.1\.os\s*=\s*(\S+)/
-
-// Matches: " Product Serial        : CKM00193901494"
-const RE_SERIAL = /Product Serial\s*:\s*(\S+)/
-
-// Matches: " Chassis Serial : FCNCS190702089" (hardware config section)
-const RE_CHASSIS_SERIAL = /Chassis Serial\s*:\s*(\S+)/
-
-// Matches: "config.snmp.sys_location = Basra"
-const RE_LOCATION = /config\.snmp\.sys_location\s*=\s*(.+)/
-
-// Matches: "Server up time              1754 days, 16:03"
-const RE_UPTIME = /Server up time\s+(\d+)\s+days/
-
-// Matches: "Encryption enabled:  no" or "Encryption enabled:  yes"
-const RE_ENCRYPTION = /Encryption enabled:\s*(\w+)/
-
-// Matches: "ha.enabled = false" or "ha.enabled = true"
-const RE_HA = /ha\.enabled\s*=\s*(\w+)/
-
-// Maps 3-letter timezone abbreviations used in DD reports to IANA names
-const TIMEZONE_MAP: Record<string, string> = {
-  AST: 'Asia/Baghdad',
-  UTC: 'UTC',
-  GMT: 'GMT',
+function parseBoolean(v: string): boolean {
+  const s = v.toLowerCase().trim();
+  return s === 'yes' || s === 'true';
 }
 
-function parseUptimeDays(text: string): number | null {
-  const match = RE_UPTIME.exec(text)
-  if (!match) return null
-  const days = parseInt(match[1], 10)
-  return isNaN(days) ? null : days
+/** Split a KEY=VALUE line on the first `=` only. */
+function splitKV(line: string): [string, string] | null {
+  const eq = line.indexOf('=');
+  if (eq === -1) return null;
+  return [line.slice(0, eq).trim(), line.slice(eq + 1).trim()];
 }
 
-function parseBoolean(value: string): boolean {
-  return value.toLowerCase() === 'yes' || value.toLowerCase() === 'true'
-}
-
-export function parseGeneralInfo(text: string): SectionResult<ReportMeta> {
+export function parseGeneralInfo(lines: string[]): SectionResult<ReportMeta> {
   try {
-    const generatedMatch = RE_GENERATED.exec(text)
-    if (!generatedMatch) {
-      return { value: null, error: 'Could not find GENERATED timestamp in report' }
+    const section = extractSection(lines, 'GENERAL INFO');
+    if (section.length === 0) {
+      return { value: null, error: 'GENERAL INFO section not found' };
     }
 
-    const rawTimestamp = generatedMatch[1]
-    const tzAbbr = generatedMatch[2]
-    const generated_on = parseIsoDate(rawTimestamp)
-    const timezone = TIMEZONE_MAP[tzAbbr] ?? tzAbbr
+    const kv: Map<string, string> = new Map();
+    for (const line of section) {
+      const pair = splitKV(line);
+      if (pair !== null) kv.set(pair[0].toUpperCase(), pair[1]);
+    }
 
-    const hostnameMatch = RE_HOSTNAME.exec(text)
-    const hostname = hostnameMatch ? hostnameMatch[1].trim() : ''
+    // GENERATED_ON — required
+    const rawGenOn = kv.get('GENERATED_ON') ?? '';
+    const generated_on = parseDate(rawGenOn);
+    if (!generated_on) {
+      return { value: null, error: `Could not parse GENERATED_ON: "${rawGenOn}"` };
+    }
 
+    // HOSTNAME — required
+    const hostname = (kv.get('HOSTNAME') ?? '').trim();
     if (!hostname) {
-      return { value: null, error: 'Could not find hostname in report' }
+      return { value: null, error: 'HOSTNAME not found in GENERAL INFO' };
     }
 
-    const modelMatch = RE_MODEL.exec(text)
-    const model = modelMatch ? modelMatch[1].trim() : null
+    // GENERATED_EPOCH_TIME
+    const epochRaw = kv.get('GENERATED_EPOCH_TIME') ?? '';
+    const generated_epoch = epochRaw ? parseInt(epochRaw, 10) || null : null;
 
-    const osMatch = RE_OS_VERSION.exec(text)
-    const os_version = osMatch ? `Data Domain OS ${osMatch[1].trim()}` : null
-
-    const serialMatch = RE_SERIAL.exec(text)
-    const serial_number = serialMatch ? serialMatch[1].trim() : null
-
-    const chassisMatch = RE_CHASSIS_SERIAL.exec(text)
-    const chassis_serial = chassisMatch ? chassisMatch[1].trim() : null
-
-    const locationMatch = RE_LOCATION.exec(text)
-    const location = locationMatch ? locationMatch[1].trim() : null
-
-    const uptime_days = parseUptimeDays(text)
-
-    const encryptionMatch = RE_ENCRYPTION.exec(text)
-    const data_encryption_enabled = encryptionMatch
-      ? parseBoolean(encryptionMatch[1])
-      : false
-
-    const haMatch = RE_HA.exec(text)
-    const ha_enabled = haMatch ? parseBoolean(haMatch[1]) : false
+    // UPTIME — "... up 1754 days, ..."
+    const uptimeRaw = kv.get('UPTIME') ?? '';
+    const uptimeMatch = /up\s+(\d+)\s+days/i.exec(uptimeRaw);
+    const uptime_days = uptimeMatch?.[1] !== undefined ? parseInt(uptimeMatch[1], 10) : null;
 
     return {
       value: {
         generated_on,
-        timezone,
+        generated_epoch,
+        timezone: kv.get('TIME_ZONE') ?? 'UTC',
         hostname,
-        model,
-        serial_number,
-        chassis_serial,
-        os_version,
-        hw_revision: null,
-        location,
+        location: kv.get('LOCATION') ?? null,
+        model: kv.get('MODEL_NO') ?? null,
+        os_version: kv.get('VERSION') ?? null,
+        serial_number: kv.get('SYSTEM_SERIALNO') ?? null,
+        chassis_serial: kv.get('CHASSIS_SERIALNO') ?? null,
+        hw_revision: kv.get('HW_REVISION') ?? null,
+        admin_email: kv.get('ADMIN_EMAIL') ?? null,
         uptime_days,
-        data_encryption_enabled,
-        ha_enabled,
+        data_encryption_enabled: parseBoolean(kv.get('DATA_ENCRYPTION_ENABLED') ?? 'no'),
+        ssd_shelf_present: parseBoolean(kv.get('SSD_SHELF_PRESENT') ?? 'no'),
+        ha_enabled: parseBoolean(kv.get('HA_ENABLED') ?? 'false'),
       },
       error: null,
-    }
-  } catch (err) {
-    return {
-      value: null,
-      error: `general-info parse failed: ${err instanceof Error ? err.message : String(err)}`,
-    }
+    };
+  } catch (e) {
+    return { value: null, error: `general-info: ${e instanceof Error ? e.message : String(e)}` };
   }
 }

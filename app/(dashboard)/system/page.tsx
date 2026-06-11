@@ -1,114 +1,186 @@
-'use client'
-import { useDevices } from '@/lib/hooks/use-devices'
-import { useSystemHealth } from '@/lib/hooks/use-system-health'
-import { ErrorState } from '@/components/ui/ErrorState'
+/**
+ * System Health page — /system
+ *
+ * Fleet health summary + per-device ingestion status grid.
+ */
 
-const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
-const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
-const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
+import { cookies } from 'next/headers';
+import { Badge } from '@/components/ui/Badge';
+import { StatCard } from '@/components/ui/StatCard';
+import { StatRow } from '@/components/ui/StatRow';
+import { Panel } from '@/components/ui/Panel';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { formatGib, formatPercent } from '@/lib/frontend/format';
+import type { SystemHealthDTO } from '@/lib/frontend/api';
 
-function relTime(iso: string | null): string {
-  if (!iso) return '—'
+async function getSystemHealth(cookieHdr: string): Promise<SystemHealthDTO | null> {
   try {
-    const diffMs = Date.now() - new Date(iso).getTime()
-    const mins = Math.round(diffMs / 60_000)
-    if (mins < 60) return `${mins}m ago`
-    return `${Math.round(mins / 60)}h ago`
-  } catch { return '—' }
+    const base = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
+    const res  = await fetch(`${base}/api/system/health`, {
+      cache:   'no-store',
+      headers: { Cookie: cookieHdr },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { success: boolean; data: SystemHealthDTO };
+    return json.success ? json.data : null;
+  } catch {
+    return null;
+  }
 }
 
-export default function SystemPage() {
-  const { devices, isLoading: devLoading } = useDevices()
-  const { data, isLoading, error, mutate } = useSystemHealth()
+export default async function SystemPage() {
+  const cookieStore = await cookies();
+  const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+  const health      = await getSystemHealth(cookieHdr);
+
+  if (!health) {
+    return <EmptyState title="System health unavailable" message="Could not load system health data" />;
+  }
+
+  const { fleetSummary: s, ingestionStatus, systemTime } = health;
+
+  // Sort: missing/overdue first, then by status severity
+  const sorted = [...ingestionStatus].sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    const w = (x: typeof a) =>
+      x.lastStatus === 'critical' ? 3 : x.lastStatus === 'warning' ? 2 : 1;
+    return w(b) - w(a);
+  });
+
+  const reportedToday = ingestionStatus.filter(d => !d.isOverdue).length;
+  const missing       = ingestionStatus.filter(d => d.isOverdue).length;
+
+  const sysTimeLocal = new Date(systemTime).toLocaleString('en-US', {
+    timeZone: 'Asia/Baghdad',
+    hour12:   false,
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  });
 
   return (
-    <div className="anim-fadein">
-      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Replication</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
-            cross-domain sync status · system health
-          </div>
+    <>
+      <div className="page-hd">
+        <div className="page-hd-left">
+          <h1 className="page-title">System Health</h1>
+          <div className="page-sub mono">{sysTimeLocal} · UTC+3 Baghdad</div>
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden', margin: '0 24px 14px' }}>
-        {[
-          { label: 'Total Devices',   val: String(devices.length),                                       color: 'var(--text)' },
-          { label: 'Reporting (24h)', val: data ? String(data.devices_reporting_24h) : '—',              color: 'var(--green)' },
-          { label: 'Errors (24h)',    val: data ? String(data.errors_last_24h) : '—',                    color: data?.errors_last_24h ? 'var(--red)' : 'var(--green)' },
-          { label: 'Total Reports',   val: data ? data.db_stats.total_reports.toLocaleString() : '—',   color: 'var(--accent2)' },
-        ].map((s, i, arr) => (
-          <div key={s.label} style={{ padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--line)' : 'none', position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--line2),transparent)' }} />
-            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 8 }}>{s.label}</div>
-            <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-1.5px', fontFamily: 'var(--font-geist-mono),monospace', lineHeight: 1, color: s.color }}>{s.val}</div>
-          </div>
-        ))}
-      </div>
+      <StatRow>
+        <StatCard
+          label="Total Devices"
+          value={String(s.totalDevices)}
+          sub="registered in fleet"
+        />
+        <StatCard
+          label="Reported Today"
+          value={`${reportedToday}/${s.totalDevices}`}
+          badge={missing > 0 ? { text: `${missing} MISSING`, variant: 'wa' } : { text: 'ALL REPORTING', variant: 'ok' }}
+        />
+        <StatCard
+          label="Fleet Used"
+          value={formatGib(s.totalUsedGib)}
+          sub={`of ${formatGib(s.totalCapacityGib)}`}
+        />
+        <StatCard
+          label="Avg Utilization"
+          value={formatPercent(s.avgUsedPercent)}
+          badge={
+            s.avgUsedPercent >= 95
+              ? { text: 'CRITICAL', variant: 'cr' }
+              : s.avgUsedPercent >= 90
+              ? { text: 'WARNING', variant: 'wa' }
+              : { text: 'OK', variant: 'ok' }
+          }
+        />
+      </StatRow>
 
-      {error && <div style={{ padding: '0 24px 14px' }}><ErrorState message="Failed to load system health" onRetry={() => void mutate()} /></div>}
-
-      <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* Device status pairs */}
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>device_status</div></div>
-          <div style={{ padding: '12px 14px' }}>
-            {(devLoading || isLoading) && <div style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</div>}
-            {data?.device_statuses.map(dev => (
-              <div key={dev.device_id} style={{ background: 'var(--bg3)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '12px 14px', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-geist-mono),monospace', fontSize: 11 }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: dev.status === 'today' ? 'var(--green)' : 'var(--amber)' }} />
-                    {dev.hostname}
-                  </div>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', background: dev.status === 'today' ? 'var(--green-bg)' : 'var(--amber-bg)', color: dev.status === 'today' ? 'var(--green)' : 'var(--amber)', borderColor: dev.status === 'today' ? 'rgba(34,197,94,.2)' : 'rgba(245,158,11,.2)' }}>
-                    {dev.status === 'today' ? 'in_sync' : 'stale'}
-                  </span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6 }}>
-                  {[
-                    { k: 'location', v: dev.location ?? 'unknown' },
-                    { k: 'last_report', v: dev.last_report_date ?? '—' },
-                    { k: 'lag', v: dev.status === 'today' ? '0m' : '> 24h' },
-                    { k: 'last_seen', v: relTime(dev.last_report_date) },
-                  ].map(kv => (
-                    <div key={kv.k}>
-                      <div style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 2 }}>{kv.k}</div>
-                      <div style={{ fontSize: 12, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, color: 'var(--text2)' }}>{kv.v}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {!isLoading && !data?.device_statuses.length && (
-              <div style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'center', padding: '24px 0' }}>No device status data</div>
-            )}
-          </div>
-        </div>
-
-        {/* Recent logs */}
-        {data?.recent_logs && data.recent_logs.length > 0 && (
-          <div style={PANEL}>
-            <div style={PANEL_HEAD}><div style={PANEL_TITLE}>recent_logs</div></div>
-            <div style={{ padding: '12px 14px' }}>
-              {data.recent_logs.slice(0, 6).map(log => (
-                <div key={log.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', flexShrink: 0, background: log.severity === 'ERROR' ? 'var(--red-bg)' : log.severity === 'WARNING' ? 'var(--amber-bg)' : 'var(--blue-bg)', color: log.severity === 'ERROR' ? 'var(--red)' : log.severity === 'WARNING' ? 'var(--amber)' : 'var(--blue)', borderColor: log.severity === 'ERROR' ? 'rgba(239,68,68,.2)' : log.severity === 'WARNING' ? 'rgba(245,158,11,.2)' : 'rgba(59,130,246,.2)' }}>
-                    {log.severity.toLowerCase()}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.message}</div>
-                    <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 2 }}>{log.event_type}</div>
-                  </div>
-                  <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', flexShrink: 0 }}>{relTime(log.created_at)}</span>
-                </div>
-              ))}
+      {/* Fleet summary cards */}
+      <div className="cols-2" style={{ marginBottom: 16 }}>
+        <Panel title="Device Health Distribution" noPadding>
+          <div style={{ padding: 14, display: 'flex', gap: 16 }}>
+            <div className="stat">
+              <div className="stat-label">Healthy</div>
+              <div className="stat-value text-ok">{s.healthyCount}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Warning</div>
+              <div className="stat-value text-wa">{s.warningCount}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Critical</div>
+              <div className="stat-value text-cr">{s.criticalCount}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Unknown</div>
+              <div className="stat-value text-muted">{s.unknownCount}</div>
             </div>
           </div>
-        )}
+        </Panel>
+        <Panel title="Active Alerts" noPadding>
+          <div style={{ padding: 14 }}>
+            <div className="stat-value" style={{ fontSize: 28, color: s.totalActiveAlerts > 0 ? 'var(--red)' : 'var(--green)' }}>
+              {s.totalActiveAlerts}
+            </div>
+            <div className="stat-sub">across all devices</div>
+          </div>
+        </Panel>
       </div>
-    </div>
-  )
+
+      {/* Per-device ingestion status */}
+      <Panel title="Ingestion Pipeline Status" meta={`${ingestionStatus.length} devices`} noPadding>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Reported Today</th>
+              <th>Last Report</th>
+              <th>Age (hrs)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(d => (
+              <tr key={d.deviceId}>
+                <td>
+                  <span className="mono" style={{ fontSize: 11.5 }}>{d.shortName}</span>
+                  <br />
+                  <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono)' }}>
+                    {d.hostname}
+                  </span>
+                </td>
+                <td>
+                  {d.isOverdue
+                    ? <span style={{ fontSize: 18 }}>❌</span>
+                    : <span style={{ fontSize: 18 }}>✅</span>}
+                </td>
+                <td className="mono" style={{ fontSize: 11 }}>
+                  {d.lastReportDate ?? '—'}
+                </td>
+                <td className="mono" style={{ fontSize: 11 }}>
+                  {d.lastReportAgeHours !== null
+                    ? `${d.lastReportAgeHours.toFixed(0)}h`
+                    : '—'}
+                </td>
+                <td>
+                  <Badge variant={
+                    d.lastStatus === 'healthy'  ? 'ok' :
+                    d.lastStatus === 'warning'  ? 'wa' :
+                    d.lastStatus === 'critical' ? 'cr' : 'gr'
+                  }>
+                    {d.lastStatus.toUpperCase()}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>No devices</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Panel>
+    </>
+  );
 }

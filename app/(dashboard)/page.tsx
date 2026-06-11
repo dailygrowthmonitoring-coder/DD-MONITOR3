@@ -1,183 +1,254 @@
-'use client'
-import { useMemo } from 'react'
-import { useDevices }        from '@/lib/hooks/use-devices'
-import { useAlerts }         from '@/lib/hooks/use-alerts'
-import { OverviewHeader }    from '@/components/dashboard/OverviewHeader'
-import { CmdStrip }          from '@/components/dashboard/CmdStrip'
-import { DomainTile }        from '@/components/dashboard/DomainTile'
-import { StatCard }          from '@/components/dashboard/StatCard'
-import { DomainStatusTable } from '@/components/dashboard/DomainStatusTable'
-import { AlertFeedPanel }    from '@/components/dashboard/AlertFeedPanel'
-import { LineChart }         from '@/components/charts/LineChart'
-import { BarChart }          from '@/components/charts/BarChart'
+/**
+ * Overview page — /
+ *
+ * Fleet device tiles, KPI stat row, utilisation chart, backup-rate chart,
+ * domain status table, and active alerts feed.
+ */
 
-function makeLabels30(): string[] {
-  return Array.from({ length: 30 }, (_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() - (29 - i))
-    return `${d.getMonth() + 1}/${d.getDate()}`
-  })
-}
+import Link from 'next/link';
+import { cookies } from 'next/headers';
+import { StatusDot } from '@/components/ui/StatusDot';
+import { Badge } from '@/components/ui/Badge';
+import { StatCard } from '@/components/ui/StatCard';
+import { StatRow } from '@/components/ui/StatRow';
+import { Panel } from '@/components/ui/Panel';
+import { ProgressBar } from '@/components/ui/ProgressBar';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { DeviceTile } from '@/components/dashboard/DeviceTile';
+import { AlertFeedItem } from '@/components/dashboard/AlertFeedItem';
+import { OverviewCharts } from './OverviewCharts';
+import {
+  formatGib,
+  formatPercent,
+  formatRelative,
+  statusToClass,
+  percentToClass,
+} from '@/lib/frontend/format';
+import type {
+  DeviceDTO,
+  AlertDTO,
+  FleetDailySummaryRowDTO,
+  FleetStorageTrendRowDTO,
+} from '@/lib/frontend/api';
 
-function makeLabels14(): string[] {
-  return Array.from({ length: 14 }, (_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() - (13 - i))
-    return `${d.getMonth() + 1}/${d.getDate()}`
-  })
-}
-
-function seededWalk(base: number, range: number, n: number): number[] {
-  const out: number[] = []
-  let v = base
-  for (let i = 0; i < n; i++) {
-    v = Math.max(0, Math.min(100, v + (Math.random() - 0.47) * range))
-    out.push(+v.toFixed(1))
+async function serverFetch<T>(path: string): Promise<T | null> {
+  try {
+    const baseUrl     = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
+    const cookieStore = await cookies();
+    const cookieHdr   = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
+    const res = await fetch(`${baseUrl}${path}`, {
+      cache:   'no-store',
+      headers: { Cookie: cookieHdr },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { success: boolean; data: T };
+    return json.success ? json.data : null;
+  } catch {
+    return null;
   }
-  return out
 }
 
-const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
-const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
-const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px', display: 'flex', alignItems: 'center', gap: 6 }
+export default async function OverviewPage() {
+  const [devices, summaryRows, trendRows, alerts] = await Promise.all([
+    serverFetch<DeviceDTO[]>('/api/devices'),
+    serverFetch<FleetDailySummaryRowDTO[]>('/api/analytics/fleet-summary?days=30'),
+    serverFetch<FleetStorageTrendRowDTO[]>('/api/analytics/storage-trend?days=30'),
+    serverFetch<AlertDTO[]>('/api/alerts?active=true&limit=4'),
+  ]);
 
-export default function OverviewPage() {
-  const { devices, isLoading } = useDevices()
-  const { data: alertsData }   = useAlerts({ is_active: true, limit: 4 })
+  const deviceList    = devices    ?? [];
+  const summaryList   = summaryRows ?? [];
+  const trendList     = trendRows   ?? [];
+  const alertList     = alerts      ?? [];
 
-  const labels30 = useMemo(() => makeLabels30(), [])
-  const labels14 = useMemo(() => makeLabels14(), [])
+  // KPI calculations from latest summary row
+  const latest = summaryList.at(-1);
+  const totalUsedGib   = deviceList.reduce((s, d) => {
+    const used = d.lastUsedPercent !== null && d.totalCapacity !== null
+      ? (d.lastUsedPercent / 100) * d.totalCapacity
+      : 0;
+    return s + used;
+  }, 0);
+  const avgPct         = deviceList.length > 0
+    ? deviceList.reduce((s, d) => s + (d.lastUsedPercent ?? 0), 0) / deviceList.length
+    : 0;
+  const totalAlerts    = deviceList.reduce((s, d) => s + d.lastActiveAlerts, 0);
+  const lastRefresh    = deviceList[0]?.lastSeenAt;
 
-  const topDevices = devices.slice(0, 3)
-  const lineDatasets = useMemo(() => topDevices.map((d, i) => ({
-    data:  seededWalk(d.storage_used_percent ?? 70, 3, 30),
-    color: i === 0 ? '#3B82F6' : i === 1 ? '#F59E0B' : '#EF4444',
-    label: d.hostname.replace(/^DD-?/i, ''),
-  })), [devices]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const barData = useMemo(() => [99.1,98.7,100,99.5,97.5,100,100,98.2,99.8,100,96.2,99.1,98.4,96.2], [])
-
-  const totalCritical = devices.reduce((s, d) => s + d.active_alerts_critical, 0)
-  const totalWarning  = devices.reduce((s, d) => s + d.active_alerts_warning, 0)
-  const avgUtil = devices.length > 0
-    ? (devices.reduce((s, d) => s + (d.storage_used_percent ?? 0), 0) / devices.length).toFixed(1)
-    : '—'
-
-  const lastRefresh = isLoading ? 'loading…' : `last refresh just now`
-
-  const bigNum = (val: React.ReactNode, color: string, unit?: string): React.ReactNode => (
-    <span style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-1.5px', color }}>
-      {val}{unit && <span style={{ fontSize: 14, color: 'var(--muted)', fontWeight: 400 }}> {unit}</span>}
-    </span>
-  )
+  // Count how many devices reported today
+  const today = new Date().toISOString().substring(0, 10);
+  const reportedToday = deviceList.filter(d => d.lastReportDate === today).length;
 
   return (
-    <div className="anim-fadein">
-      <OverviewHeader deviceCount={devices.length} lastRefresh={lastRefresh} />
-      <CmdStrip connected />
-
-      {/* Domain tiles */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 8, margin: '0 24px 14px' }}>
-        {isLoading
-          ? Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} style={{ background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '10px 12px', height: 80 }} />
-            ))
-          : devices.slice(0, 6).map(d => (
-              <DomainTile key={d.id} device={d} />
-            ))
-        }
+    <>
+      {/* Page header */}
+      <div className="page-hd">
+        <div className="page-hd-left">
+          <h1 className="page-title">Overview</h1>
+          <div className="page-sub">
+            {deviceList.length} domain{deviceList.length !== 1 ? 's' : ''} · ingestion active
+            {lastRefresh ? ` · last refresh ${formatRelative(lastRefresh)}` : ''}
+          </div>
+        </div>
+        <div className="page-hd-actions">
+          <Button variant="default">Export</Button>
+          <Button variant="primary">+ Add Domain</Button>
+        </div>
       </div>
 
+      {/* CMD strip */}
+      <div className="cmd-strip">
+        <div className="cmd-text">
+          <span className="cmd-prompt">$</span>
+          dd-monitor --status all --format compact --refresh 60s
+          <span className="cmd-cursor" />
+        </div>
+        <div className="cmd-meta">✓ connected · sftp.corp.internal</div>
+      </div>
+
+      {/* Device tiles */}
+      {deviceList.length > 0 ? (
+        <div className="dom-strip">
+          {deviceList.map(d => (
+            <Link key={d.id} href={`/devices/${d.id}`} style={{ textDecoration: 'none' }}>
+              <DeviceTile device={d} />
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="mb-16">
+          <EmptyState title="No devices" message="No active devices found" />
+        </div>
+      )}
+
       {/* Stat row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden', margin: '0 24px 14px' }}>
+      <StatRow>
         <StatCard
-          label="Total Devices"
-          value={bigNum(devices.length, 'var(--accent2)')}
-          sub={`${devices.length} registered`}
-          tag="— active"
-          tagType="nu"
+          label="Capacity Used"
+          value={formatGib(totalUsedGib)}
+          sub={`across ${deviceList.length} device${deviceList.length !== 1 ? 's' : ''}`}
         />
         <StatCard
           label="Avg Utilization"
-          value={bigNum(avgUtil, 'var(--amber)', '%')}
-          sub="across all devices"
-          tag={avgUtil !== '—' && Number(avgUtil) > 80 ? '↑ Rising' : '— stable'}
-          tagType={avgUtil !== '—' && Number(avgUtil) > 80 ? 'dn' : 'nu'}
+          value={formatPercent(avgPct)}
+          badge={
+            avgPct >= 95
+              ? { text: 'CRITICAL', variant: 'cr' }
+              : avgPct >= 90
+              ? { text: 'WARNING', variant: 'wa' }
+              : { text: 'HEALTHY', variant: 'ok' }
+          }
         />
         <StatCard
-          label="Active Alerts (warn)"
-          value={bigNum(totalWarning, totalWarning > 0 ? 'var(--amber)' : 'var(--green)')}
-          sub={`${totalCritical} critical · ${totalWarning} warning`}
-          tag={totalWarning > 0 ? 'Attention needed' : 'All clear'}
-          tagType={totalWarning > 0 ? 'dn' : 'up'}
+          label="Devices Reporting"
+          value={`${reportedToday}/${deviceList.length}`}
+          sub={`as of ${today}`}
+          {...(reportedToday < deviceList.length ? { badge: { text: 'MISSING', variant: 'wa' as const } } : {})}
         />
         <StatCard
-          label="Critical Alerts"
-          value={bigNum(totalCritical, totalCritical > 0 ? 'var(--red)' : 'var(--green)')}
-          sub={totalCritical > 0 ? 'Action required' : 'No critical alerts'}
-          tag={totalCritical > 0 ? 'Action required' : 'OK'}
-          tagType={totalCritical > 0 ? 'dn' : 'up'}
+          label="Active Alerts"
+          value={String(totalAlerts)}
+          valueClass={totalAlerts > 0 ? 'text-cr' : ''}
+          badge={
+            totalAlerts > 0
+              ? { text: `${totalAlerts} active`, variant: 'cr' }
+              : { text: 'CLEAR', variant: 'ok' }
+          }
         />
-      </div>
+      </StatRow>
 
       {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, margin: '0 24px 14px' }}>
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}>
-            <div style={PANEL_TITLE}>
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="12" height="12"><polyline points="1,12 5,7 9,9 15,3"/></svg>
-              utilization_30d.csv
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {topDevices.map((d, i) => (
-                <span key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace' }}>
-                  <span style={{ width: 10, height: 1.5, background: i === 0 ? '#3B82F6' : i === 1 ? '#F59E0B' : '#EF4444', display: 'inline-block', borderRadius: 1 }} />
-                  {d.hostname.replace(/^DD-?/i, '').toUpperCase()}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div style={{ padding: '12px 14px' }}>
-            <LineChart labels={labels30} datasets={lineDatasets} yMin={60} yMax={100} unit="%" />
-          </div>
-        </div>
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}>
-            <div style={PANEL_TITLE}>
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="12" height="12"><rect x="1" y="4" width="3" height="11" rx="1"/><rect x="6" y="1" width="3" height="14" rx="1"/><rect x="11" y="7" width="3" height="8" rx="1"/></svg>
-              backup_rate_14d
-            </div>
-            <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace' }}>
-              today: {barData[barData.length - 1]}%
-            </span>
-          </div>
-          <div style={{ padding: '12px 14px' }}>
-            <BarChart labels={labels14} data={barData} yMin={90} yMax={100} unit="%" />
-          </div>
-        </div>
-      </div>
+      <OverviewCharts trendRows={trendList} summaryRows={summaryList} />
 
-      {/* Bottom row: table + alerts */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, margin: '0 24px 14px' }}>
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}>
-            <div style={PANEL_TITLE}>domain_status</div>
-            <a href="/devices" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 'var(--r)', fontSize: 11.5, cursor: 'pointer', border: 'none', background: 'none', color: 'var(--muted)', textDecoration: 'none' }}>
-              view all →
-            </a>
+      {/* Domain status table + alerts feed */}
+      <div className="cols-2-wide" style={{ marginTop: 16 }}>
+        {/* Domain table */}
+        <Panel title="Domain Status" noPadding>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Status</th>
+                <th>Used</th>
+                <th>Util</th>
+                <th>Alerts</th>
+                <th>Last Seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deviceList.map(d => {
+                const cls     = statusToClass(d.lastStatus);
+                const pct     = d.lastUsedPercent ?? 0;
+                const usedGib = d.lastUsedPercent !== null && d.totalCapacity !== null
+                  ? (d.lastUsedPercent / 100) * d.totalCapacity
+                  : null;
+                return (
+                  <tr key={d.id}>
+                    <td>
+                      <Link
+                        href={`/devices/${d.id}`}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: 'inherit' }}
+                      >
+                        <StatusDot status={d.lastStatus} />
+                        <span className="mono" style={{ fontSize: 11.5 }}>{d.hostname}</span>
+                      </Link>
+                    </td>
+                    <td>
+                      <Badge variant={cls}>
+                        {d.lastStatus === 'healthy' ? 'OK' : d.lastStatus === 'warning' ? 'WARNING' : d.lastStatus === 'critical' ? 'CRITICAL' : 'UNKNOWN'}
+                      </Badge>
+                    </td>
+                    <td className="mono">{usedGib !== null ? formatGib(usedGib) : '—'}</td>
+                    <td style={{ minWidth: 120 }}>
+                      <ProgressBar value={pct} showLabel />
+                    </td>
+                    <td>
+                      {d.lastActiveAlerts > 0 ? (
+                        <span style={{ color: 'var(--red)', fontFamily: 'var(--font-geist-mono)' }}>
+                          {d.lastActiveAlerts}
+                        </span>
+                      ) : (
+                        <span className="text-muted">0</span>
+                      )}
+                    </td>
+                    <td className="mono" style={{ fontSize: 11 }}>
+                      {d.lastSeenAt ? formatRelative(d.lastSeenAt) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+              {deviceList.length === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                    No devices
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Panel>
+
+        {/* Alerts feed */}
+        <Panel
+          title="Active Alerts"
+          meta={`${alertList.length} shown`}
+          actions={
+            <Link href="/alerts" style={{ textDecoration: 'none' }}>
+              <Button variant="ghost" size="sm">all →</Button>
+            </Link>
+          }
+          noPadding
+        >
+          <div style={{ padding: '0 14px' }}>
+            {alertList.length > 0 ? (
+              alertList.map(a => <AlertFeedItem key={a.id} alert={a} />)
+            ) : (
+              <EmptyState title="No active alerts" message="All systems clear" />
+            )}
           </div>
-          <DomainStatusTable devices={devices} />
-        </div>
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}>
-            <div style={PANEL_TITLE}>alerts</div>
-            <a href="/alerts" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer', border: 'none', background: 'none', color: 'var(--muted)', textDecoration: 'none' }}>
-              all →
-            </a>
-          </div>
-          <AlertFeedPanel alerts={alertsData?.data ?? []} />
-        </div>
+        </Panel>
       </div>
-    </div>
-  )
+    </>
+  );
 }

@@ -1,59 +1,68 @@
-import type { NextRequest } from 'next/server'
-import { z } from 'zod'
-import { processIngest } from '@/lib/services/ingest'
-import { logEvent } from '@/lib/services/log'
-import { checkRateLimit } from '@/lib/rate-limit/index'
+/**
+ * POST /api/ingest
+ *
+ * The primary data ingestion endpoint. Receives a raw autosupport file payload
+ * from the Google Apps Script (runs hourly, processes daily email attachments)
+ * and runs the full ingestion pipeline.
+ *
+ * Security layers (enforced in order — any failure returns before next step):
+ *   1. Rate limit   — withRateLimit HOF (config.RATE_LIMIT_REQUESTS_PER_HOUR per IP)
+ *   2. API key auth — x-api-key header must match config.INGEST_SECRET
+ *   3. Zod schema   — ingestBodySchema validates raw_text length and file_name
+ *
+ * On success: 200 { success: true, data: IngestionOutcome }
+ * On error:   appropriate 4xx/5xx { success: false, error: {...} }
+ */
 
-const BodySchema = z.object({
-  raw_text: z.string().min(100).max(10_000_000),
-  filename: z.string().regex(/^[\w\-. ()]+\.txt$/i),
-})
+import { withRateLimit } from '@/lib/infrastructure/rate-limit/rate-limiter';
+import { config } from '@/lib/infrastructure/config/config';
+import { parseSchema, ingestBodySchema } from '@/lib/validation';
+import { ingest } from '@/lib/services';
+import { requireApiKey, jsonOk, jsonErr, logRequest } from '../_lib/route-helpers';
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const apiKey = request.headers.get('x-api-key')
-  if (!apiKey || apiKey !== process.env.INGEST_SECRET) {
-    return Response.json(
-      { error: 'Unauthorized', code: 'INVALID_API_KEY' },
-      { status: 401 }
-    )
+export const dynamic = 'force-dynamic';
+
+async function handler(request: Request): Promise<Response> {
+  const start         = Date.now();
+  const correlationId = crypto.randomUUID();
+
+  // Step 1: Authenticate via x-api-key
+  const authResult = requireApiKey(request);
+  if (!authResult.ok) {
+    logRequest('POST', '/api/ingest', 401, Date.now() - start, correlationId);
+    return jsonErr(authResult.error);
   }
 
-  const ip =
-    request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
-  const rl = checkRateLimit(ip)
-  if (!rl.allowed) {
-    return Response.json(
-      { error: 'Too many requests', code: 'RATE_LIMIT_EXCEEDED' },
-      { status: 429, headers: { 'Retry-After': String(rl.retryAfter ?? 3600) } }
-    )
-  }
-
-  let body: z.infer<typeof BodySchema>
+  // Step 2: Parse and validate request body
+  let body: unknown;
   try {
-    const raw = await request.json()
-    body = BodySchema.parse(raw)
+    body = await request.json();
   } catch {
-    return Response.json(
-      { error: 'Invalid request body', code: 'VALIDATION_ERROR' },
-      { status: 400 }
-    )
+    const { ValidationError } = await import('@/lib/infrastructure/errors/app-error');
+    const parseErr = new ValidationError([{ field: '_root', message: 'Request body must be valid JSON.' }]);
+    logRequest('POST', '/api/ingest', 400, Date.now() - start, correlationId);
+    return jsonErr(parseErr);
   }
 
-  try {
-    const result = await processIngest(body.raw_text, body.filename)
-    return Response.json(result, { status: 200 })
-  } catch (err) {
-    console.error('[ingest] Full error:', err)
-    const message = err instanceof Error ? err.message : String(err)
-    await logEvent({
-      event_type: 'INGEST_ERROR',
-      message: `Ingest failed for ${body.filename}: ${message}`,
-      details: { filename: body.filename },
-      severity: 'ERROR',
-    })
-    return Response.json(
-      { error: message, code: 'INGEST_ERROR' },
-      { status: 500 }
-    )
+  const validationResult = parseSchema(ingestBodySchema, body);
+  if (!validationResult.ok) {
+    logRequest('POST', '/api/ingest', 400, Date.now() - start, correlationId);
+    return jsonErr(validationResult.error);
   }
+
+  const { raw_text, file_name } = validationResult.value;
+
+  // Step 3: Run the ingestion pipeline
+  const ingestionResult = await ingest(raw_text, file_name);
+
+  const status = ingestionResult.ok ? 200 : ingestionResult.error.httpStatus;
+  logRequest('POST', '/api/ingest', status, Date.now() - start, correlationId);
+
+  if (!ingestionResult.ok) return jsonErr(ingestionResult.error);
+  return jsonOk(ingestionResult.value);
 }
+
+// Wrap the handler with the rate limiter HOF — this is the exported route.
+export const POST = withRateLimit(handler, {
+  limitPerHour: config.RATE_LIMIT_REQUESTS_PER_HOUR,
+});

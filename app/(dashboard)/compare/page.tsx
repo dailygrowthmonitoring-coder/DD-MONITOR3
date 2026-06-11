@@ -1,124 +1,220 @@
-'use client'
-import { useState } from 'react'
-import { format, subDays } from 'date-fns'
-import { useDevices } from '@/lib/hooks/use-devices'
-import { useCompare } from '@/lib/hooks/use-compare'
-import { ErrorState }  from '@/components/ui/ErrorState'
-import { DATA_RETENTION_DAYS } from '@/lib/constants/ui'
+'use client';
 
-const today   = format(new Date(), 'yyyy-MM-dd')
-const minDate = format(subDays(new Date(), DATA_RETENTION_DAYS), 'yyyy-MM-dd')
+/**
+ * Compare page — /compare
+ *
+ * Multi-device comparison on a selected date with color-coded metric table.
+ */
 
-const PANEL: React.CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }
-const PANEL_HEAD: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--line)' }
-const PANEL_TITLE: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.6px' }
-const TH: React.CSSProperties = { fontSize: 10, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.6px', color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', padding: '8px 12px', borderBottom: '1px solid var(--line)', textAlign: 'left' }
-const TD: React.CSSProperties = { padding: '9px 12px', borderBottom: '1px solid var(--line)', fontSize: 11.5 }
+import { useEffect, useState } from 'react';
+import { Panel } from '@/components/ui/Panel';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { fetchDevices, fetchComparison } from '@/lib/frontend/api';
+import { formatGib, percentToClass, todayIso } from '@/lib/frontend/format';
+import type { DeviceDTO, DeviceComparisonRowDTO } from '@/lib/frontend/api';
+
+interface MetricRow {
+  readonly key:      keyof DeviceComparisonRowDTO;
+  readonly label:    string;
+  readonly format:   (v: number | string | null) => string;
+  readonly color?:   (v: number | null) => 'ok' | 'wa' | 'cr' | 'gr';
+}
+
+const METRICS: MetricRow[] = [
+  {
+    key:    'usedPercent',
+    label:  'Storage Util %',
+    format: v => v !== null ? `${(v as number).toFixed(1)}%` : '—',
+    color:  v => v !== null ? percentToClass(v) : 'gr',
+  },
+  {
+    key:    'usedGib',
+    label:  'Used Storage',
+    format: v => v !== null ? formatGib(v as number) : '—',
+  },
+  {
+    key:    'totalGib',
+    label:  'Total Capacity',
+    format: v => v !== null ? formatGib(v as number) : '—',
+  },
+  {
+    key:    'totalFactor',
+    label:  'Compression',
+    format: v => v !== null ? `${(v as number).toFixed(1)}x` : '—',
+  },
+  {
+    key:    'failedDisks',
+    label:  'Failed Disks',
+    format: v => String(v ?? 0),
+    color:  v => (v ?? 0) > 0 ? 'cr' : 'ok',
+  },
+  {
+    key:    'activeAlerts',
+    label:  'Active Alerts',
+    format: v => String(v ?? 0),
+    color:  v => (v ?? 0) > 0 ? 'wa' : 'ok',
+  },
+  {
+    key:    'deviceStatus',
+    label:  'Device Status',
+    format: v => String(v ?? '—').toUpperCase(),
+    color:  v => 'gr',
+  },
+];
 
 export default function ComparePage() {
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [date, setDate]               = useState(today)
+  const [devices, setDevices]     = useState<DeviceDTO[]>([]);
+  const [selected, setSelected]   = useState<Set<string>>(new Set());
+  const [date, setDate]           = useState(todayIso());
+  const [results, setResults]     = useState<DeviceComparisonRowDTO[]>([]);
+  const [loading, setLoading]     = useState(false);
+  const [compared, setCompared]   = useState(false);
 
-  const { devices, isLoading: devLoading } = useDevices()
-  const { data, isLoading, error }          = useCompare(selectedIds, selectedIds.length > 0 ? date : null)
+  useEffect(() => {
+    async function load() {
+      const res = await fetchDevices();
+      if (res.success) setDevices(res.data);
+    }
+    void load();
+  }, []);
 
   function toggleDevice(id: string) {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 5 ? [...prev, id] : prev
-    )
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else if (next.size < 7) {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function runComparison() {
+    if (selected.size < 2) return;
+    setLoading(true);
+    const res = await fetchComparison([...selected], date);
+    if (res.success) setResults(res.data);
+    setCompared(true);
+    setLoading(false);
+  }
+
+  function statusBadge(status: string) {
+    const v = status === 'healthy' ? 'ok' : status === 'warning' ? 'wa' : status === 'critical' ? 'cr' : 'gr';
+    return <Badge variant={v}>{status.toUpperCase()}</Badge>;
   }
 
   return (
-    <div className="anim-fadein">
-      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.5px', color: 'var(--text)' }}>Backup Health</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', marginTop: 3 }}>
-            job success rates · daily performance
-          </div>
+    <>
+      <div className="page-hd">
+        <div className="page-hd-left">
+          <h1 className="page-title">Compare</h1>
+          <div className="page-sub">Side-by-side device comparison · select 2–7 devices</div>
         </div>
       </div>
 
-      {/* Stats strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden', margin: '0 24px 14px' }}>
-        {[
-          { label: 'Total Devices',  val: String(devices.length), color: 'var(--text)' },
-          { label: 'Critical',       val: String(devices.filter(d => d.device_status === 'critical').length), color: 'var(--red)' },
-          { label: 'Warning',        val: String(devices.filter(d => d.device_status === 'warning').length), color: 'var(--amber)' },
-          { label: 'Healthy',        val: String(devices.filter(d => d.device_status === 'healthy').length), color: 'var(--green)' },
-        ].map((s, i, arr) => (
-          <div key={s.label} style={{ padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--line)' : 'none', position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--line2),transparent)' }} />
-            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-geist-mono),monospace', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 8 }}>{s.label}</div>
-            <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-1.5px', fontFamily: 'var(--font-geist-mono),monospace', lineHeight: 1, color: s.color }}>{s.val}</div>
+      {/* Device selector */}
+      <Panel title="Device Selection" noPadding>
+        <div style={{ padding: 14 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+            {devices.map(d => (
+              <button
+                key={d.id}
+                onClick={() => toggleDevice(d.id)}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: 'var(--r)',
+                  border: `1px solid ${selected.has(d.id) ? 'var(--accent)' : 'var(--line)'}`,
+                  background: selected.has(d.id) ? 'var(--accent-glow)' : 'var(--bg3)',
+                  color: selected.has(d.id) ? 'var(--accent2)' : 'var(--sub)',
+                  fontFamily: 'var(--font-geist-mono), monospace',
+                  fontSize: 11.5,
+                  cursor: 'pointer',
+                  transition: 'all 0.1s',
+                }}
+              >
+                {d.shortName}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 24px 14px' }}>
-        {/* Device selector */}
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}>
-            <div style={PANEL_TITLE}>select_devices</div>
-            <input type="date" value={date} min={minDate} max={today} onChange={e => setDate(e.target.value)}
-              style={{ fontSize: 10.5, color: 'var(--sub)', fontFamily: 'var(--font-geist-mono),monospace', background: 'var(--bg3)', border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: '2px 6px' }}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              style={{
+                background: 'var(--bg3)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--r)',
+                padding: '5px 10px',
+                color: 'var(--text2)',
+                fontSize: 12,
+                fontFamily: 'var(--font-geist-mono)',
+                outline: 'none',
+              }}
             />
-          </div>
-          <div style={{ padding: '12px 14px' }}>
-            {devLoading && <div style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</div>}
-            {!devLoading && devices.map(d => {
-              const checked = selectedIds.includes(d.id)
-              return (
-                <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={checked} onChange={() => toggleDevice(d.id)} style={{ accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 11.5, fontFamily: 'var(--font-geist-mono),monospace', color: checked ? 'var(--text)' : 'var(--sub)' }}>
-                    {d.hostname}
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', color: 'var(--muted)' }}>
-                    {d.storage_used_percent != null ? `${d.storage_used_percent}%` : '—'}
-                  </span>
-                </label>
-              )
-            })}
-            {!devLoading && devices.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 12 }}>No devices</div>}
+            <Button
+              variant="primary"
+              disabled={selected.size < 2 || loading}
+              onClick={() => void runComparison()}
+            >
+              {loading ? 'Comparing…' : 'Compare'}
+            </Button>
+            {selected.size < 2 && (
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                Select at least 2 devices
+              </span>
+            )}
           </div>
         </div>
+      </Panel>
 
-        {/* Comparison table */}
-        <div style={PANEL}>
-          <div style={PANEL_HEAD}><div style={PANEL_TITLE}>by_domain · {date}</div></div>
-          {selectedIds.length === 0 && (
-            <div style={{ padding: '40px 14px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>Select devices to compare</div>
-          )}
-          {selectedIds.length > 0 && isLoading && (
-            <div style={{ padding: '40px 14px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>Loading…</div>
-          )}
-          {selectedIds.length > 0 && error && <div style={{ padding: '12px 14px' }}><ErrorState message="Failed to load comparison" /></div>}
-          {selectedIds.length > 0 && !isLoading && !error && data && (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr><th style={TH}>domain</th><th style={TH}>storage</th><th style={TH}>compression</th><th style={TH}>alerts</th></tr>
-              </thead>
-              <tbody>
-                {data.map(r => {
-                  const dev = devices.find(d => d.id === r.device_id)
-                  const pct    = r.storage_used_percent ?? 0
-                  const comp   = r.compression_factor !== null ? `${r.compression_factor}x` : '—'
-                  const alerts = r.active_alerts
-                  return (
-                    <tr key={r.id}>
-                      <td style={TD}><span style={{ fontFamily: 'var(--font-geist-mono),monospace', fontSize: 11, color: 'var(--text2)' }}>{dev?.hostname ?? r.device_id.slice(0, 8)}</span></td>
-                      <td style={TD}><span style={{ fontFamily: 'var(--font-geist-mono),monospace', fontSize: 11, color: pct > 90 ? 'var(--red)' : pct > 80 ? 'var(--amber)' : 'var(--text2)' }}>{pct}%</span></td>
-                      <td style={TD}><span style={{ fontFamily: 'var(--font-geist-mono),monospace', fontSize: 11, color: 'var(--sub)' }}>{String(comp)}</span></td>
-                      <td style={TD}><span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 2, fontSize: 10, fontFamily: 'var(--font-geist-mono),monospace', fontWeight: 500, border: '1px solid', background: alerts > 0 ? 'var(--red-bg)' : 'var(--green-bg)', color: alerts > 0 ? 'var(--red)' : 'var(--green)', borderColor: alerts > 0 ? 'rgba(239,68,68,.2)' : 'rgba(34,197,94,.2)' }}>{alerts}</span></td>
+      {/* Results table */}
+      {compared && (
+        <div style={{ marginTop: 16 }}>
+          {results.length > 0 ? (
+            <Panel title="Comparison Results" meta={`${results.length} devices · ${date}`} noPadding>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      {results.map(r => (
+                        <th key={r.deviceId} className="mono">{r.shortName}</th>
+                      ))}
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {METRICS.map(m => (
+                      <tr key={m.key}>
+                        <td style={{ color: 'var(--sub)', fontSize: 11.5 }}>{m.label}</td>
+                        {results.map(r => {
+                          const raw = r[m.key as keyof DeviceComparisonRowDTO];
+                          const val = typeof raw === 'number' ? raw : null;
+                          const cls = m.color ? m.color(val) : 'gr';
+                          const formatted = m.key === 'deviceStatus'
+                            ? statusBadge(String(raw ?? ''))
+                            : <span className={`mono text-${cls === 'gr' ? 'sub' : cls}`}>{m.format(raw as number | null)}</span>;
+                          return (
+                            <td key={r.deviceId}>{formatted}</td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          ) : (
+            <EmptyState
+              title="No data for selected date"
+              message={`No reports found for ${date} — try a different date`}
+            />
           )}
         </div>
-      </div>
-    </div>
-  )
+      )}
+    </>
+  );
 }

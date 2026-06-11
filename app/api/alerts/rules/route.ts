@@ -1,45 +1,38 @@
-import type { NextRequest } from 'next/server'
-import { z } from 'zod'
-import { requireAuth, requireAdmin } from '@/lib/auth/validate-session'
-import { getAlertRules, updateAlertRule } from '@/lib/services/alert-rules'
-import { logEvent } from '@/lib/services/log'
+/**
+ * GET /api/alerts/rules
+ *
+ * Returns the full list of alert rules (enabled and disabled).
+ * Used by the Alerts page and the Settings → Alert Rules section.
+ *
+ * Auth: Supabase session required.
+ */
 
-const PatchSchema = z.object({
-  id:        z.string().uuid(),
-  threshold: z.number().positive(),
-})
+import { listAlertRules } from '@/lib/services';
+import {
+  requireSession,
+  jsonOk,
+  jsonErr,
+  logRequest,
+} from '../../_lib/route-helpers';
 
-export async function GET(): Promise<Response> {
-  const auth = await requireAuth()
-  if (auth instanceof Response) return auth
+export const dynamic = 'force-dynamic';
 
-  try {
-    const rules = await getAlertRules()
-    return Response.json(rules)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    await logEvent({ event_type: 'API_ERROR', message: `GET /api/alerts/rules: ${message}`, severity: 'ERROR' })
-    return Response.json({ error: 'Failed to fetch alert rules', code: 'DB_ERROR' }, { status: 500 })
-  }
-}
+export async function GET(request: Request): Promise<Response> {
+  const start         = Date.now();
+  const correlationId = crypto.randomUUID();
+  const path          = '/api/alerts/rules';
 
-export async function PATCH(request: NextRequest): Promise<Response> {
-  const auth = await requireAdmin()
-  if (auth instanceof Response) return auth
-
-  let body: z.infer<typeof PatchSchema>
-  try {
-    body = PatchSchema.parse(await request.json())
-  } catch {
-    return Response.json({ error: 'Invalid request body', code: 'VALIDATION_ERROR' }, { status: 400 })
+  const authResult = await requireSession(request);
+  if (!authResult.ok) {
+    logRequest('GET', path, 401, Date.now() - start, correlationId);
+    return jsonErr(authResult.error);
   }
 
-  try {
-    const rule = await updateAlertRule(body.id, body.threshold)
-    return Response.json(rule)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    await logEvent({ event_type: 'API_ERROR', message: `PATCH /api/alerts/rules: ${message}`, severity: 'ERROR' })
-    return Response.json({ error: 'Failed to update alert rule', code: 'DB_ERROR' }, { status: 500 })
-  }
+  const result = await listAlertRules();
+
+  const status = result.ok ? 200 : result.error.httpStatus;
+  logRequest('GET', path, status, Date.now() - start, correlationId);
+
+  if (!result.ok) return jsonErr(result.error);
+  return jsonOk(result.value);
 }

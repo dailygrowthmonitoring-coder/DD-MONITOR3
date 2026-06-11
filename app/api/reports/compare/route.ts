@@ -1,55 +1,73 @@
-import type { NextRequest } from 'next/server'
-import { z } from 'zod'
-import { requireAuth } from '@/lib/auth/validate-session'
-import { getReportsForComparison } from '@/lib/services/reports'
-import { logEvent } from '@/lib/services/log'
+/**
+ * GET /api/reports/compare
+ *
+ * Returns the full reports for 2–7 devices on the same date, side-by-side.
+ * Used by the Comparison dashboard page.
+ *
+ * Query params (compareQuerySchema):
+ *   device_ids: repeated UUID query params (e.g. ?device_ids=x&device_ids=y)
+ *               minimum 2, maximum 7
+ *   date:       ISO date (optional — defaults to today when not provided)
+ *
+ * Devices with no report on the requested date are silently omitted from the
+ * response. The client handles partial results gracefully.
+ *
+ * Auth: Supabase session required.
+ */
 
-const QuerySchema = z.object({
-  devices: z
-    .string()
-    .min(1, 'At least one device id required')
-    .transform(s => s.split(',').map(v => v.trim()).filter(Boolean)),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
-})
+import { parseSchema, compareQuerySchema } from '@/lib/validation';
+import { compareDevices } from '@/lib/services';
+import {
+  requireSession,
+  jsonOk,
+  jsonErr,
+  logRequest,
+} from '../../_lib/route-helpers';
 
-export async function GET(request: NextRequest): Promise<Response> {
-  const auth = await requireAuth()
-  if (auth instanceof Response) return auth
+export const dynamic = 'force-dynamic';
 
-  const url = new URL(request.url)
-  let query: z.infer<typeof QuerySchema>
-  try {
-    query = QuerySchema.parse({
-      devices: url.searchParams.get('devices') ?? '',
-      date: url.searchParams.get('date') ?? '',
-    })
-  } catch {
-    return Response.json(
-      { error: 'Invalid query parameters', code: 'VALIDATION_ERROR' },
-      { status: 400 }
-    )
+export async function GET(request: Request): Promise<Response> {
+  const start         = Date.now();
+  const correlationId = crypto.randomUUID();
+  const path          = '/api/reports/compare';
+
+  const authResult = await requireSession(request);
+  if (!authResult.ok) {
+    logRequest('GET', path, 401, Date.now() - start, correlationId);
+    return jsonErr(authResult.error);
   }
 
-  if (query.devices.length === 0) {
-    return Response.json(
-      { error: 'At least one device id required', code: 'VALIDATION_ERROR' },
-      { status: 400 }
-    )
+  const url = new URL(request.url);
+
+  // device_ids is sent as repeated query params — collect all values
+  const rawParams: Record<string, string | string[]> = {};
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key === 'device_ids') {
+      const existing = rawParams['device_ids'];
+      if (existing === undefined) {
+        rawParams['device_ids'] = value;
+      } else if (Array.isArray(existing)) {
+        existing.push(value);
+      } else {
+        rawParams['device_ids'] = [existing, value];
+      }
+    } else {
+      rawParams[key] = value;
+    }
   }
 
-  try {
-    const reports = await getReportsForComparison(query.devices, query.date)
-    return Response.json(reports)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    await logEvent({
-      event_type: 'API_ERROR',
-      message: `GET /api/reports/compare: ${message}`,
-      severity: 'ERROR',
-    })
-    return Response.json(
-      { error: 'Failed to fetch comparison reports', code: 'DB_ERROR' },
-      { status: 500 }
-    )
+  const queryResult = parseSchema(compareQuerySchema, rawParams);
+  if (!queryResult.ok) {
+    logRequest('GET', path, 400, Date.now() - start, correlationId);
+    return jsonErr(queryResult.error);
   }
+
+  const { device_ids, date } = queryResult.value;
+  const result = await compareDevices(device_ids as readonly string[], date);
+
+  const status = result.ok ? 200 : result.error.httpStatus;
+  logRequest('GET', path, status, Date.now() - start, correlationId);
+
+  if (!result.ok) return jsonErr(result.error);
+  return jsonOk(result.value);
 }
