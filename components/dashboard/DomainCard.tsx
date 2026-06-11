@@ -71,7 +71,7 @@ export function DomainCard({ device, onClick }: DomainCardProps) {
         <div>
           <div className="dc-num-label">Last Seen</div>
           <div className="dc-num-val" style={{ fontSize: 11, fontFamily: 'var(--font-geist-mono)' }}>
-            {device.lastReportDate ?? '—'}
+            {device.lastReportDate?.substring(0, 10) ?? '—'}
           </div>
         </div>
       </div>

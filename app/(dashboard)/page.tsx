@@ -62,23 +62,30 @@ export default async function OverviewPage() {
   const trendList     = trendRows   ?? [];
   const alertList     = alerts      ?? [];
 
-  // KPI calculations from latest summary row
+  // KPI calculations — prefer fleet summary for storage totals (device.totalCapacity
+  // can be null if total_capacity_gib was never written to the devices table, whereas
+  // the fleet summary aggregates from ingested report data which is always present).
   const latest = summaryList.at(-1);
-  const totalUsedGib   = deviceList.reduce((s, d) => {
-    const used = d.lastUsedPercent !== null && d.totalCapacity !== null
-      ? (d.lastUsedPercent / 100) * d.totalCapacity
-      : 0;
-    return s + used;
-  }, 0);
+  const totalUsedGib   = latest?.totalUsedGib
+    ?? deviceList.reduce((s, d) => {
+      const used = d.lastUsedPercent !== null && d.totalCapacity !== null
+        ? (d.lastUsedPercent / 100) * d.totalCapacity
+        : 0;
+      return s + used;
+    }, 0);
   const avgPct         = deviceList.length > 0
     ? deviceList.reduce((s, d) => s + (d.lastUsedPercent ?? 0), 0) / deviceList.length
     : 0;
-  const totalAlerts    = deviceList.reduce((s, d) => s + d.lastActiveAlerts, 0);
+  const totalAlerts    = latest?.totalActiveAlerts
+    ?? deviceList.reduce((s, d) => s + d.lastActiveAlerts, 0);
   const lastRefresh    = deviceList[0]?.lastSeenAt;
 
-  // Count how many devices reported today
+  // Count how many devices reported today — compare only the date portion because
+  // lastReportDate serialises from a Date object to a full ISO datetime string.
   const today = new Date().toISOString().substring(0, 10);
-  const reportedToday = deviceList.filter(d => d.lastReportDate === today).length;
+  const reportedToday = deviceList.filter(
+    d => d.lastReportDate?.substring(0, 10) === today,
+  ).length;
 
   return (
     <>

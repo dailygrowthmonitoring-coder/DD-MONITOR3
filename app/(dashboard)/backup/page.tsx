@@ -39,7 +39,7 @@ export default function BackupPage() {
 
   const today     = new Date().toISOString().substring(0, 10);
   const active    = devices.filter(d => d.isActive);
-  const reported  = devices.filter(d => d.lastReportDate === today);
+  const reported  = devices.filter(d => d.lastReportDate?.substring(0, 10) === today);
   const failures  = devices.filter(d => d.lastStatus === 'critical');
 
   // Compute success rate from last summary entry
@@ -132,7 +132,7 @@ export default function BackupPage() {
                         : <span className="text-muted">0</span>}
                     </td>
                     <td className="mono" style={{ fontSize: 11 }}>
-                      {d.lastReportDate ?? '—'}
+                      {d.lastReportDate?.substring(0, 10) ?? '—'}
                     </td>
                   </tr>
                 );
